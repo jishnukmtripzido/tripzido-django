@@ -1,2 +1,5 @@
 Django==6.0.2
+djangorestframework==3.17.1
+Markdown==3.10.2
+django-filter==25.2
 
