@@ -11,9 +11,14 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
 from pathlib import Path
+import environ
+
+env = environ.Env()
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+environ.Env.read_env(BASE_DIR / '.env')
 
 
 # Quick-start development settings - unsuitable for production
@@ -38,6 +43,14 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "rest_framework",
+    "drf_spectacular",
+    "apps.core",
+    "apps.bookings",
+    "apps.locations",
+    "apps.payments",
+    "apps.reports",
+    "apps.users"
+ 
 ]
 
 MIDDLEWARE = [
@@ -50,7 +63,7 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
-ROOT_URLCONF = "tripzido.urls"
+ROOT_URLCONF = "config.urls"
 
 TEMPLATES = [
     {
@@ -75,8 +88,12 @@ WSGI_APPLICATION = "tripzido.wsgi.application"
 
 DATABASES = {
     "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": env("DATABASE_NAME"),
+        "USER": env("DATABASE_USER"),
+        "PASSWORD": env("DATABASE_PASSWORD"),
+        "HOST": env("DATABASE_HOST", default="localhost"),
+        "PORT": env("DATABASE_PORT", default="5432"),
     }
 }
 
@@ -105,7 +122,14 @@ REST_FRAMEWORK = {
     # or allow read-only access for unauthenticated users.
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.DjangoModelPermissionsOrAnonReadOnly"
-    ]
+    ],
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+}
+
+SPECTACULAR_SETTINGS = {
+    "TITLE": "Bike Rental API",
+    "DESCRIPTION": "API documentation for the bike rental platform",
+    "VERSION": "1.0.0",
 }
 
 
