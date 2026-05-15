@@ -80,7 +80,7 @@ TEMPLATES = [
     },
 ]
 
-WSGI_APPLICATION = "tripzido.wsgi.application"
+WSGI_APPLICATION = "config.wsgi.application"
 
 
 # Database
