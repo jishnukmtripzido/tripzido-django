@@ -1,5 +1,5 @@
 from django.contrib import admin
-from django.utils.html import format_html
+from django.utils.safestring import mark_safe
 
 
 class SoftDeleteAdmin(admin.ModelAdmin):
@@ -14,7 +14,7 @@ class SoftDeleteAdmin(admin.ModelAdmin):
 
     def is_deleted_display(self, obj):
         if obj.is_deleted:
-            return format_html('<span style="color:red;">🗑 Deleted</span>')
-        return format_html('<span style="color:green;">✔ Active</span>')
+            return mark_safe('<span style="color:red;">🗑 Deleted</span>')
+        return mark_safe('<span style="color:green;">✔ Active</span>')
     
     is_deleted_display.short_description = 'Status'

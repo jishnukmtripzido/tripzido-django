@@ -11,11 +11,15 @@ Models:
     - UserRoleAssignment: Associates a user with a role and optional scope context.
 """
 
-from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
-from django.db import models
+from django.contrib.auth.models import AbstractBaseUser
+from django.contrib.auth.base_user import BaseUserManager
 
+
+from django.db import models
 from apps.core.models import BaseModel
 from apps.locations.models import City
+from django.contrib.auth.models import PermissionsMixin
+
 
 
 class Role(BaseModel):
@@ -142,9 +146,32 @@ class RolePermission(BaseModel):
         """Return a readable grant/deny summary for this mapping."""
         granted_symbol = "✓" if self.is_granted else "✗"
         return f"{self.role} → {self.permission} ({granted_symbol})"
+    
+
+class UserManager(BaseUserManager):
+
+    # def create_user(self, phone_number, **extra_fields):
+    #     user = self.model(phone_number=phone_number, **extra_fields)
+    #     user.set_unusable_password()   # OTP users → no password
+    #     user.save(using=self._db)
+    #     return user
+
+    def create_superuser(self, phone_number, password=None, **extra_fields):
+        if not password:
+            raise ValueError("Superuser must have a password")  # enforce it
+        extra_fields.setdefault("is_staff", True)
+        extra_fields.setdefault("is_active", True)
+        user = self.model(phone_number=phone_number, **extra_fields)
+        user.set_password(password)    # superuser → real password
+        user.save(using=self._db)
+        return user
+    
+    def get_queryset(self):
+        """Return a queryset filtered to only include active (non-soft-deleted) objects."""
+        return super().get_queryset().filter(is_active=True)
 
 
-class User(AbstractBaseUser, BaseModel):
+class User(AbstractBaseUser,PermissionsMixin, BaseModel):
     """
     Unified user model for all platform actors: Customer, Vendor, and Admin.
 
@@ -219,7 +246,7 @@ class User(AbstractBaseUser, BaseModel):
     USERNAME_FIELD = "phone_number"
     REQUIRED_FIELDS: list[str] = []
 
-    # objects = TripzidoUserManager()
+    objects = UserManager()
 
     def __str__(self) -> str:
         """Return phone number and full name for display purposes."""

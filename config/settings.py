@@ -82,6 +82,7 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "config.wsgi.application"
 
+AUTH_USER_MODEL = "users.User"
 
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
@@ -117,19 +118,47 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 
+
 REST_FRAMEWORK = {
-    # Use Django's standard `django.contrib.auth` permissions,
-    # or allow read-only access for unauthenticated users.
     "DEFAULT_PERMISSION_CLASSES": [
-        "rest_framework.permissions.DjangoModelPermissionsOrAnonReadOnly"
+        "rest_framework.permissions.IsAuthenticated",  # ← change this too
     ],
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework_simplejwt.authentication.JWTAuthentication",  # ← add
+    ],
+}
+
+from datetime import timedelta
+
+SIMPLE_JWT = {
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=300),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+    "ROTATE_REFRESH_TOKENS": True,       # new refresh token on every refresh
+    "BLACKLIST_AFTER_ROTATION": True,    # old refresh token becomes invalid
+    "AUTH_HEADER_TYPES": ("Bearer",),    # Authorization: Bearer <token>
 }
 
 SPECTACULAR_SETTINGS = {
-    "TITLE": "Bike Rental API",
-    "DESCRIPTION": "API documentation for the bike rental platform",
+    "TITLE": "Tripzido API",
+    "DESCRIPTION": "API documentation for Tripzido",
     "VERSION": "1.0.0",
+    "SECURITY": [{"BearerAuth": []}],                    # ← add
+    "COMPONENTS": {                                       # ← add
+        "securitySchemes": {
+            "BearerAuth": {
+                "type": "http",
+                "scheme": "bearer",
+                "bearerFormat": "JWT",
+            }
+        }
+    },
+      "SWAGGER_UI_SETTINGS": {
+        "persistAuthorization": True,    # token survives refresh ← your previous issue
+        "displayRequestDuration": True,  # shows how long each request took
+        "filter": True,                  # adds a search/filter bar for endpoints
+        "deepLinking": True,             # URL updates when you open an endpoint
+    },
 }
 
 
