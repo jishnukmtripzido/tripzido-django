@@ -58,8 +58,9 @@ class StateRepository:
 class CityRepository:
 
     @staticmethod
-    def get_all():
-        return City.objects.select_related("state", "country").all()
+    def get_all(filters: dict = None):
+        queryset = City.objects.select_related("state", "country").all()
+        return queryset   # return queryset, not list — views/filters need it
 
     @staticmethod
     def get_by_id(city_id: int):

@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     "rest_framework",
     "drf_spectacular",
     "rest_framework_simplejwt.token_blacklist",
+     "django_filters",
     "apps.core",
     "apps.bookings",
     "apps.locations",
@@ -128,6 +129,13 @@ REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework_simplejwt.authentication.JWTAuthentication",  # ← add
     ],
+    "DEFAULT_FILTER_BACKENDS": [
+        "django_filters.rest_framework.DjangoFilterBackend",  # filtering
+        "rest_framework.filters.SearchFilter",                # searching
+        "rest_framework.filters.OrderingFilter",              # ordering
+    ],
+     "DEFAULT_PAGINATION_CLASS": "apps.core.pagination.CustomPagination",
+    "PAGE_SIZE": 10,
 }
 
 from datetime import timedelta

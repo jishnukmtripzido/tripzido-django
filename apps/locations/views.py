@@ -1,35 +1,50 @@
-from django.shortcuts import render
-
-# Create your views here.
 # apps/locations/views.py
+from rest_framework.generics import GenericAPIView
 
-from django.core.exceptions import ValidationError
-from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 
-from apps.locations.services import (
-    CountryService, StateService,
-    CityService, PickupLocationService
-)
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.filters import SearchFilter, OrderingFilter
+from apps.core.pagination import CustomPagination
+from apps.locations.filters import CityFilter, StateFilter, PickupLocationFilter
+from rest_framework.views import APIView
+from django.core.exceptions import ValidationError
 from apps.locations.serializers import (
     CountrySerializer, StateSerializer,
     CitySerializer, PickupLocationSerializer
 )
+from apps.locations.services import (
+    CountryService, StateService,
+    CityService, PickupLocationService
+)
 
 
-class CountryListCreateView(APIView):
+class CountryListCreateView(GenericAPIView):
+    serializer_class = CountrySerializer
+    pagination_class = CustomPagination
+    filter_backends = [SearchFilter, OrderingFilter]
+    search_fields = ["name", "code"]
+    ordering_fields = ["name", "code"]
+    # ordering = ["name"]
+
+    def get_queryset(self):
+        return CountryService.get_all()
 
     def get(self, request):
-        countries = CountryService.get_all()
-        serializer = CountrySerializer(countries, many=True)
+        queryset = self.filter_queryset(self.get_queryset())  # applies search/ordering
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)
 
     def post(self, request):
-        serializer = CountrySerializer(data=request.data)
+        serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        country = CountryService.create(serializer.validated_data)
-        return Response(CountrySerializer(country).data, status=status.HTTP_201_CREATED)
+        city = CountryService.create(serializer.validated_data)
+        return Response(CountrySerializer(city).data, status=status.HTTP_201_CREATED)
 
 
 class CountryDetailView(APIView):
@@ -56,15 +71,31 @@ class CountryDetailView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-# Same pattern for State, City, PickupLocation
-class StateListCreateView(APIView):
+
+
+class StateListCreateView(GenericAPIView):
+    serializer_class = StateSerializer
+    pagination_class = CustomPagination
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_class = StateFilter
+    search_fields = ["name", "code"]
+    ordering_fields = ["name"]
+    ordering = ["name"]
+
+    def get_queryset(self):
+        return StateService.get_all()
 
     def get(self, request):
-        states = StateService.get_all()
-        return Response(StateSerializer(states, many=True).data)
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
 
     def post(self, request):
-        serializer = StateSerializer(data=request.data)
+        serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         state = StateService.create(serializer.validated_data)
         return Response(StateSerializer(state).data, status=status.HTTP_201_CREATED)
@@ -94,14 +125,29 @@ class StateDetailView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-class CityListCreateView(APIView):
+class CityListCreateView(GenericAPIView):
+    serializer_class = CitySerializer
+    pagination_class = CustomPagination
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_class = CityFilter
+    search_fields = ["name"]
+    ordering_fields = ["name", "state"]
+    ordering = ["name"]
+
+    def get_queryset(self):
+        return CityService.get_all()
 
     def get(self, request):
-        cities = CityService.get_all()
-        return Response(CitySerializer(cities, many=True).data)
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
 
     def post(self, request):
-        serializer = CitySerializer(data=request.data)
+        serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         city = CityService.create(serializer.validated_data)
         return Response(CitySerializer(city).data, status=status.HTTP_201_CREATED)
@@ -131,14 +177,29 @@ class CityDetailView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-class PickupLocationListCreateView(APIView):
+class PickupLocationListCreateView(GenericAPIView):
+    serializer_class = PickupLocationSerializer
+    pagination_class = CustomPagination
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_class = PickupLocationFilter
+    search_fields = ["name", "address"]
+    ordering_fields = ["name", "city"]
+    ordering = ["name"]
+
+    def get_queryset(self):
+        return PickupLocationService.get_all()
 
     def get(self, request):
-        locations = PickupLocationService.get_all()
-        return Response(PickupLocationSerializer(locations, many=True).data)
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
 
     def post(self, request):
-        serializer = PickupLocationSerializer(data=request.data)
+        serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         location = PickupLocationService.create(serializer.validated_data)
         return Response(PickupLocationSerializer(location).data, status=status.HTTP_201_CREATED)
