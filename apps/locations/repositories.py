@@ -59,12 +59,12 @@ class CityRepository:
 
     @staticmethod
     def get_all(filters: dict = None):
-        queryset = City.objects.select_related("state", "country").all()
+        queryset = City.objects.select_related("state").all()
         return queryset   # return queryset, not list — views/filters need it
 
     @staticmethod
     def get_by_id(city_id: int):
-        return City.objects.select_related("state", "country").filter(id=city_id).first()
+        return City.objects.select_related("state").filter(id=city_id).first()
 
     @staticmethod
     def create(data: dict):

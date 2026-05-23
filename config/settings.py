@@ -30,7 +30,16 @@ SECRET_KEY = "django-insecure-*t$q%a+b-getr)v_55n0hnn+*s$q*6jc5v$-gjuzi(aenhea@k
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ["*"]
+
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://140.238.243.5",
+    "http://192.168.1.4:3000"
+]
+
+CORS_ALLOW_CREDENTIALS = True
 
 
 # Application definition
@@ -45,17 +54,21 @@ INSTALLED_APPS = [
     "rest_framework",
     "drf_spectacular",
     "rest_framework_simplejwt.token_blacklist",
-     "django_filters",
+    "django_filters",
+    "corsheaders",
     "apps.core",
     "apps.bookings",
     "apps.locations",
     "apps.payments",
     "apps.reports",
-    "apps.users"
+    "apps.users",
+    "apps.vendors",
+    "apps.vehicles"
  
 ]
 
 MIDDLEWARE = [
+    "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -125,6 +138,7 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",  # ← change this too
     ],
+    
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework_simplejwt.authentication.JWTAuthentication",  # ← add

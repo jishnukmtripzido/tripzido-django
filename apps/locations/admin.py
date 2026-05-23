@@ -21,8 +21,8 @@ class StateAdmin(SoftDeleteAdmin):
 
 @admin.register(City)
 class CityAdmin(SoftDeleteAdmin):
-    list_display = ("name", "state", "country", "is_deleted_display")
-    list_filter = ("country", "state")
+    list_display = ("name", "state", "is_deleted_display")
+    list_filter = ("state",)
     search_fields = ("name",)
     readonly_fields = ("is_deleted_display",)
 

@@ -52,7 +52,7 @@ class State(BaseModel):
         on_delete=models.PROTECT,
         related_name="states",
     )
-    name = models.CharField(max_length=100)
+    name = models.CharField(max_length=40)
     code = models.CharField(max_length=10, blank=True)  # e.g. "MH", "NSW"
 
     class Meta:  # pylint: disable=too-few-public-methods
@@ -83,14 +83,9 @@ class City(BaseModel):
         city_image (ImageField | None): Optional hero image shown in the UI.
     """
 
-    name = models.CharField(max_length=100)
+    name = models.CharField(max_length=40)
     state = models.ForeignKey(
         State,
-        on_delete=models.PROTECT,
-        related_name="cities",
-    )
-    country = models.ForeignKey(
-        Country,
         on_delete=models.PROTECT,
         related_name="cities",
     )
