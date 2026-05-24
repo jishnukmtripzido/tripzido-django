@@ -31,6 +31,8 @@ class VehicleType(BaseModel):
     transmission_type = models.CharField(
         max_length=20, choices=TransmissionType.choices
     )
+    primary_image = models.ImageField(upload_to="vehicle_type/images/",null=True,
+    blank=True)
     fuel_type = models.CharField(max_length=20, choices=FuelType.choices)
     seats = models.PositiveSmallIntegerField()
     cc = models.PositiveIntegerField(help_text="Engine displacement in cc")

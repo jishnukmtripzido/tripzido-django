@@ -102,20 +102,6 @@ class City(BaseModel):
         """Return ``"<city name>, <state>"``."""
         return f"{self.name}, {self.state}"
     
-    def clean(self):
-        """
-        Validates the consistency of the city, state, and country relationship.
-        Ensures that if both the state and country are provided, the country
-        associated with the state matches the specified country. If the countries
-        do not match, a ValidationError is raised.
-        Raises:
-            ValidationError: If the country's state does not match the specified country.
-        """
-
-        if self.state and self.country and self.state.country != self.country:
-            raise ValidationError(
-                "City's country must match the country of its state."
-            )
 
 
 class PickupLocation(BaseModel):

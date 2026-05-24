@@ -23,6 +23,9 @@ from drf_spectacular.views import (
     SpectacularRedocView,
 )
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
+from django.conf.urls.static import static
+from django.conf import settings
+
 
 
 urlpatterns = [
@@ -38,4 +41,7 @@ urlpatterns = [
     path("api/locations/", include("apps.locations.urls")),
     path('api/vendors/',include('apps.vendors.urls')),
     path("api/vehicles/",include("apps.vehicles.urls"))
-]
+] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+
+
+

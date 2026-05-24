@@ -12,10 +12,25 @@ from apps.vehicles.services import VehicleSearchService
 from apps.core.responses import success_response, error_response
 from drf_spectacular.utils import extend_schema, OpenApiParameter
 from drf_spectacular.types import OpenApiTypes
+from rest_framework.permissions import AllowAny, IsAuthenticated
+
 
 
 class VehicleSearchView(GenericAPIView):
     serializer_class = VehicleSearchResultSerializer
+
+    def get_permissions(self):
+        """
+        Determine the permissions required for the current request.
+        Returns:
+            list: A list containing the appropriate permission classes based on the HTTP method.
+                  - If the request method is "GET", it returns [AllowAny()], allowing unrestricted access.
+                  - For other methods, it returns [IsAuthenticated()], restricting access to authenticated users.
+        """
+
+        if self.request.method == "GET":
+            return [AllowAny()]
+        return [IsAuthenticated()] 
 
     def get_queryset(self):
         return VehicleSearchService.search(
@@ -51,7 +66,6 @@ class VehicleSearchView(GenericAPIView):
         responses=VehicleSearchResultSerializer(many=True),
     )
     def get(self, request):
-        # 1. Validate query params
         query_serializer = VehicleSearchQuerySerializer(data=request.query_params)
         if not query_serializer.is_valid():
             return error_response(
@@ -61,16 +75,13 @@ class VehicleSearchView(GenericAPIView):
             )
 
         try:
-            # 2. Call service directly (no get_queryset needed here)
-            listings = VehicleSearchService.search(
+            vehicle_types = VehicleSearchService.search(
                 city_id=query_serializer.validated_data["city_id"],
                 pickup_datetime=query_serializer.validated_data["pickup_datetime"],
                 dropoff_datetime=query_serializer.validated_data["dropoff_datetime"],
             )
 
-            # 3. Serialize
-            serializer = self.get_serializer(listings, many=True)
-
+            serializer = self.get_serializer(vehicle_types, many=True)
             return success_response(
                 data=serializer.data,
                 message="Vehicles retrieved successfully",
@@ -83,7 +94,6 @@ class VehicleSearchView(GenericAPIView):
                 errors=e.messages,
                 status=status.HTTP_400_BAD_REQUEST,
             )
-
         except Exception as e:
             return error_response(
                 message="Failed to retrieve vehicles",
