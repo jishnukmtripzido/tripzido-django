@@ -127,7 +127,7 @@ class VehicleListing(BaseModel):
     doorstep_delivery_enabled = models.BooleanField(default=False)
 
     # Pay-at-pickup option
-    pay_at_pickup_enabled = models.BooleanField(default=False)
+    # pay_at_pickup_enabled = models.BooleanField(default=False)
 
     # Km limit and excess charge (shown in US-C07, US-C31)
     km_limit_per_day = models.PositiveIntegerField(null=True, blank=True)
@@ -146,14 +146,14 @@ class VehicleListing(BaseModel):
     operating_hours_end = models.TimeField(null=True, blank=True)
 
     # Partial payment toggle (US-C09)
-    partial_payment_enabled = models.BooleanField(default=True)
-    partial_payment_percentage = models.DecimalField(
-        max_digits=5,
-        decimal_places=2,
-        null=True,
-        blank=True,
-        help_text="% of total to collect upfront when partial payment selected",
-    )
+    # partial_payment_enabled = models.BooleanField(default=True)
+    # partial_payment_percentage = models.DecimalField(
+    #     max_digits=5,
+    #     decimal_places=2,
+    #     null=True,
+    #     blank=True,
+    #     help_text="% of total to collect upfront when partial payment selected",
+    # )
 
     class Meta:
         unique_together = ("vendor", "vehicle_type", "pickup_location")
@@ -220,6 +220,15 @@ class PricingPackage(BaseModel):
     )
     duration_hours = models.DecimalField(max_digits=5, decimal_places=2)
     price = models.DecimalField(max_digits=10, decimal_places=2)
+    pay_at_pickup_enabled = models.BooleanField(default=False)
+    # partial_payment_enabled = models.BooleanField(default=True)
+    partial_payment_percentage = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="% of total to collect upfront when partial payment selected",
+    )
     # is_active = models.BooleanField(default=True)
 
     class Meta:
