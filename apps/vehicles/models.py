@@ -4,6 +4,8 @@ from apps.users.models import User
 from apps.vendors.models import Vendor
 from apps.locations.models import PickupLocation
 from datetime import time
+from django.core.exceptions import ValidationError
+
 
 # Create your models here.
 class VehicleType(BaseModel):
@@ -236,6 +238,85 @@ class PricingPackage(BaseModel):
 
     def __str__(self):
         return f"{self.listing} – {self.package_type} @ ₹{self.price}"
+    
+
+class ListingOperatingSchedule(BaseModel):
+    """
+    Recurring weekly schedule per listing.
+    Vendor sets this once — it repeats every week automatically.
+    If a day has no entry → that entire day is unavailable.
+    """
+    class DayOfWeek(models.IntegerChoices):
+        MONDAY    = 0, "Monday"
+        TUESDAY   = 1, "Tuesday"
+        WEDNESDAY = 2, "Wednesday"
+        THURSDAY  = 3, "Thursday"
+        FRIDAY    = 4, "Friday"
+        SATURDAY  = 5, "Saturday"
+        SUNDAY    = 6, "Sunday"
+
+    listing          = models.ForeignKey(
+        VehicleListing, on_delete=models.CASCADE,
+        related_name="operating_schedule"
+    )
+    day_of_week      = models.IntegerField(choices=DayOfWeek.choices)
+
+    # null open_time = midnight (00:00), null close_time = midnight (24:00)
+    open_time        = models.TimeField(default=time(7, 0))
+    close_time       = models.TimeField(default=time(19, 0))
+
+    is_closed        = models.BooleanField(
+        default=False,
+        help_text="If True, listing is fully unavailable this day regardless of times"
+    )
+
+    class Meta:
+        unique_together = ("listing", "day_of_week")
+        ordering = ["day_of_week"]
+
+
+class ListingBlockedPeriod(BaseModel):
+    """
+    Specific date/time blocks — maintenance, holidays, personal use.
+    Overrides the recurring schedule for that period.
+    """
+    class BlockReason(models.TextChoices):
+        MAINTENANCE  = "MAINTENANCE",  "Maintenance"
+        PERSONAL_USE = "PERSONAL_USE", "Personal Use"
+        HOLIDAY      = "HOLIDAY",      "Holiday Closure"
+        OTHER        = "OTHER",        "Other"
+
+    listing    = models.ForeignKey(
+        VehicleListing, on_delete=models.CASCADE,
+        related_name="blocked_periods"
+    )
+    # Use datetime not just date — so vendor can block 7pm Dec 24 to 7am Dec 26
+    start_datetime = models.DateTimeField(db_index=True)
+    end_datetime   = models.DateTimeField()
+    reason         = models.CharField(
+        max_length=20, choices=BlockReason.choices,
+        default=BlockReason.OTHER
+    )
+    note           = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["start_datetime"]
+        indexes = [
+            models.Index(fields=["listing", "start_datetime", "end_datetime"])
+        ]
+
+    def clean(self):
+        if self.end_datetime <= self.start_datetime:
+            raise ValidationError("end_datetime must be after start_datetime")
+
+        overlapping = ListingBlockedPeriod.objects.filter(
+            listing=self.listing,
+            start_datetime__lt=self.end_datetime,
+            end_datetime__gt=self.start_datetime,
+        ).exclude(pk=self.pk)
+
+        if overlapping.exists():
+            raise ValidationError("Overlaps with an existing blocked period.")
 
 
 class DoorstepDeliveryTier(BaseModel):

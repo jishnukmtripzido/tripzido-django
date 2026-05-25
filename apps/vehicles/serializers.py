@@ -39,16 +39,18 @@ class VehicleSearchQuerySerializer(serializers.Serializer):
 
         return attrs
 
+
 # ── Response serializers ──────────────────────────────────────────────
 
 class VehicleTypeSerializer(serializers.ModelSerializer):
     class Meta:
         model  = VehicleType
         fields = [
-            "id", "name", "primary_image","brand", "make_year",
+            "id", "name", "primary_image", "brand", "make_year",
             "transmission_type", "fuel_type",
             "seats", "cc", "mileage_kmpl",
         ]
+
 
 class VehicleImageSerializer(serializers.ModelSerializer):
     class Meta:
@@ -56,10 +58,10 @@ class VehicleImageSerializer(serializers.ModelSerializer):
         fields = ["id", "image", "is_primary", "sort_order"]
 
 
-
 class PricingPackageSerializer(serializers.ModelSerializer):
     package_name   = serializers.CharField(source="package_type.name")
     category       = serializers.CharField(source="package_type.category.name")
+    # Use the package_type's duration_hours as the canonical duration
     duration_hours = serializers.DecimalField(
         source="package_type.duration_hours",
         max_digits=5,
@@ -68,7 +70,16 @@ class PricingPackageSerializer(serializers.ModelSerializer):
 
     class Meta:
         model  = PricingPackage
-        fields = ["id", "package_name", "category", "duration_hours", "price"]
+        fields = [
+            "id",
+            "package_name",
+            "category",
+            "duration_hours",
+            "price",
+            "pay_at_pickup_enabled",       # now lives on PricingPackage
+            "partial_payment_percentage",  # now lives on PricingPackage
+        ]
+
 
 # ── Per-location listing card ─────────────────────────────────────────
 
@@ -83,37 +94,34 @@ class ListingLocationSerializer(serializers.ModelSerializer):
     city_name     = serializers.CharField(source="pickup_location.city.name")
     vendor_id     = serializers.IntegerField(source="vendor.id")
     vendor_name   = serializers.CharField(source="vendor.business_name")
-    images = VehicleImageSerializer(many=True, read_only=True)
+    images        = VehicleImageSerializer(many=True, read_only=True)
 
     # Daily price surfaced to the top so the card can display it
     # without the frontend having to dig through pricing_packages
-    daily_price   = serializers.SerializerMethodField()
+    daily_price      = serializers.SerializerMethodField()
     pricing_packages = PricingPackageSerializer(many=True, read_only=True)
 
     class Meta:
         model  = VehicleListing
         fields = [
-            "id",                         # listing_id — used when initiating booking
+            "id",                           # listing_id — used when initiating booking
             "location_id",
             "location_name",
             "city_id",
             "city_name",
             "vendor_id",
             "vendor_name",
-            "daily_price",               # shortcut field for card display
+            "daily_price",                  # shortcut field for card display
             "available_count",
             "security_deposit_amount",
             "km_limit_per_day",
             "excess_charge_per_km",
             "late_return_penalty_per_hour",
             "doorstep_delivery_enabled",
-            "pay_at_pickup_enabled",
-            "partial_payment_enabled",
-            "partial_payment_percentage",
             "operating_hours_start",
             "operating_hours_end",
-            "pricing_packages",
-            "images"
+            "pricing_packages",             # pay_at_pickup & partial_payment now per-package
+            "images",
         ]
 
     def get_daily_price(self, listing):
@@ -127,43 +135,6 @@ class ListingLocationSerializer(serializers.ModelSerializer):
         return None
 
 
-
-
-
-# class VehicleSearchResultSerializer(serializers.ModelSerializer):
-#     vehicle_type      = VehicleTypeSerializer(read_only=True)
-#     images            = VehicleImageSerializer(many=True, read_only=True)
-#     pricing_packages  = PricingPackageSerializer(many=True, read_only=True)
-#     location_name     = serializers.CharField(source="pickup_location.name")
-#     location_id       = serializers.CharField(source="pickup_location.id")
-#     city_name         = serializers.CharField(source="pickup_location.city.name")
-#     city_id           = serializers.CharField(source="pickup_location.city.id")
-
-#     class Meta:
-#         model  = VehicleListing
-#         fields = [
-#             "id",
-#             "vehicle_type",
-#             "location_name",
-#             "location_id",
-#             "city_name",
-#             "city_id",
-#             "available_count",
-#             "security_deposit_amount",
-#             "km_limit_per_day",
-#             "excess_charge_per_km",
-#             "late_return_penalty_per_hour",
-#             "doorstep_delivery_enabled",
-#             "partial_payment_enabled",
-#             "partial_payment_percentage",
-#             "operating_hours_start",
-#             "operating_hours_end",
-#             "images",
-#             "pricing_packages",
-#         ]
-
-
-
 # ── Root search result (one per VehicleType) ──────────────────────────
 
 class VehicleSearchResultSerializer(serializers.ModelSerializer):
@@ -172,7 +143,6 @@ class VehicleSearchResultSerializer(serializers.ModelSerializer):
     `locations` contains every vendor+location listing for that type
     in the searched city — frontend drives the location selector from this.
     """
-    # images    = VehicleImageSerializer(many=True, read_only=True)
     locations = serializers.SerializerMethodField()
 
     class Meta:
@@ -188,7 +158,6 @@ class VehicleSearchResultSerializer(serializers.ModelSerializer):
             "cc",
             "mileage_kmpl",
             "primary_image",
-            # "images",
             "locations",
         ]
 

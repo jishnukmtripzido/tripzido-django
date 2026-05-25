@@ -9,6 +9,8 @@ from apps.vehicles.models import (
     VehicleImage,
     VehicleListing,
     VehicleType,
+    ListingOperatingSchedule,
+    ListingBlockedPeriod
 )
 
 
@@ -64,3 +66,20 @@ class VehicleImageAdmin(SoftDeleteAdmin):
     list_filter = ("source", "is_primary")
     search_fields = ("listing__vehicle_type__name",)
     readonly_fields = ("is_deleted_display",)
+
+
+@admin.register(ListingOperatingSchedule)
+class ListingOperatingScheduleAdmin(SoftDeleteAdmin):
+    list_display = ("listing","day_of_week","open_time","close_time","is_closed")
+    list_filter = ("listing","is_closed")
+    search_fields = ("listing__vehicle_type__name",)
+    readonly_fields = ("is_deleted_display",)
+
+
+@admin.register(ListingBlockedPeriod)
+class ListingBlockedPeriodAdmin(SoftDeleteAdmin):
+    list_display = ("listing","start_datetime","end_datetime","reason","note")
+    list_filter = ("listing",)
+    search_fields = ("listing__vehicle_type__name",)
+    readonly_fields = ("is_deleted_display",)
+
