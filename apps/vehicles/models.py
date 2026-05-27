@@ -41,7 +41,7 @@ class VehicleType(BaseModel):
     transmission_type = models.CharField(
         max_length=20, choices=TransmissionType.choices
     )
-    vehicle_type = models.CharField(max_length=50, db_index=True, choices=VehicleTypeChoices.choices)  # "Sedan", "SUV"
+    vehicle_type = models.CharField(max_length=50, default=VehicleTypeChoices.SCOOTER, db_index=True, choices=VehicleTypeChoices.choices)  # "Sedan", "SUV"
     primary_image = models.ImageField(upload_to="vehicle_type/images/",null=True,
     blank=True)
     fuel_type = models.CharField(max_length=20, choices=FuelType.choices)
