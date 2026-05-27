@@ -37,15 +37,17 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:3000",
     "http://140.238.243.5",
     "http://192.168.1.4:3000",
-    "http://192.168.1.2:3000"
+    "http://192.168.1.2:3000",
+    "https://tripzido-next.vercel.app"
 ]
 
 CORS_ALLOW_CREDENTIALS = True
 
 CSRF_TRUSTED_ORIGINS = [
     "https://tripzido-django.onrender.com",
-    "http://140.238.243.5:3000",  # if separate
-    "http://localhost:3000",               # for local dev
+    "http://140.238.243.5:3000",
+    "http://localhost:3000",    
+    "https://tripzido-next.vercel.app"
 ]
 
 
