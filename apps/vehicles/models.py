@@ -26,6 +26,14 @@ class VehicleType(BaseModel):
         HYBRID = "HYBRID", "Hybrid"
         DIESEL = "DIESEL", "Diesel"
 
+    class VehicleTypeChoices(models.TextChoices):
+        CAR = "CAR", "Car"
+        BIKE = "BIKE", "Bike"
+        SCOOTER = "SCOOTER", "Scooter"
+        AUTO_RICKSHAW = "AUTO", "Auto Rickshaw"
+        BUS = "BUS", "Bus"
+        VAN = "VAN", "Van"
+
     # Core specs (US-C07, US-A01)
     name = models.CharField(max_length=200)
     brand = models.CharField(max_length=100, db_index=True)
@@ -33,6 +41,7 @@ class VehicleType(BaseModel):
     transmission_type = models.CharField(
         max_length=20, choices=TransmissionType.choices
     )
+    vehicle_type = models.CharField(max_length=50, db_index=True, choices=VehicleTypeChoices.choices)  # "Sedan", "SUV"
     primary_image = models.ImageField(upload_to="vehicle_type/images/",null=True,
     blank=True)
     fuel_type = models.CharField(max_length=20, choices=FuelType.choices)
