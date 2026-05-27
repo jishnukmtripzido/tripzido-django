@@ -48,7 +48,7 @@ class VehicleTypeSerializer(serializers.ModelSerializer):
         fields = [
             "id", "name", "primary_image", "brand", "make_year",
             "transmission_type", "fuel_type",
-            "seats", "cc", "mileage_kmpl",
+            "seats", "cc", "mileage_kmpl","vehicle_type",
         ]
 
 
@@ -154,6 +154,7 @@ class VehicleSearchResultSerializer(serializers.ModelSerializer):
             "make_year",
             "transmission_type",
             "fuel_type",
+            "vehicle_type",
             "seats",
             "cc",
             "mileage_kmpl",
