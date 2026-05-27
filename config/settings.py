@@ -42,6 +42,12 @@ CORS_ALLOWED_ORIGINS = [
 
 CORS_ALLOW_CREDENTIALS = True
 
+CSRF_TRUSTED_ORIGINS = [
+    "https://tripzido-django.onrender.com",
+    "http://140.238.243.5:3000",  # if separate
+    "http://localhost:3000",               # for local dev
+]
+
 
 # Application definition
 
