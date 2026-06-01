@@ -100,6 +100,7 @@ class ListingLocationSerializer(serializers.ModelSerializer):
     # without the frontend having to dig through pricing_packages
     daily_price      = serializers.SerializerMethodField()
     pricing_packages = PricingPackageSerializer(many=True, read_only=True)
+    pay_at_pickup_enabled       = serializers.SerializerMethodField()
 
     class Meta:
         model  = VehicleListing
@@ -122,6 +123,7 @@ class ListingLocationSerializer(serializers.ModelSerializer):
             "operating_hours_end",
             "pricing_packages",             # pay_at_pickup & partial_payment now per-package
             "images",
+            "pay_at_pickup_enabled",
         ]
 
     def get_daily_price(self, listing):
@@ -133,6 +135,16 @@ class ListingLocationSerializer(serializers.ModelSerializer):
             if pkg.package_type.category.name.lower() == "daily":
                 return str(pkg.price)
         return None
+
+    def get_pay_at_pickup_enabled(self, listing):
+        """
+        If any package has pay_at_pickup_enabled=True, we consider the listing as a whole to have that option.
+        This simplifies frontend logic, so it doesn't have to check each package.
+        """
+        for pkg in listing.pricing_packages.all():
+            if pkg.pay_at_pickup_enabled:
+                return True
+        return False
 
 
 # ── Root search result (one per VehicleType) ──────────────────────────
