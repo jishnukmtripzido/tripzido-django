@@ -213,6 +213,7 @@ class User(AbstractBaseUser,PermissionsMixin, BaseModel):
         DELETED = "DELETED", "Deleted"
 
     phone_number = models.CharField(max_length=15, unique=True, db_index=True)
+    phone_country_code = models.CharField(max_length=5)  # e.g. "+1", "+91" for easier formatting later
     first_name = models.CharField(max_length=50, blank=True)
     last_name = models.CharField(max_length=50, blank=True)
     email = models.EmailField(blank=True, null=True)

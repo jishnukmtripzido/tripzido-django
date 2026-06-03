@@ -40,7 +40,8 @@ urlpatterns = [
     path("api/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
     path("api/locations/", include("apps.locations.urls")),
     path('api/vendors/',include('apps.vendors.urls')),
-    path("api/vehicles/",include("apps.vehicles.urls"))
+    path("api/vehicles/",include("apps.vehicles.urls")),
+    path("api/users/", include("apps.users.urls")),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 
 

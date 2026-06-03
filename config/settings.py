@@ -65,6 +65,7 @@ INSTALLED_APPS = [
     "rest_framework_simplejwt.token_blacklist",
     "django_filters",
     "corsheaders",
+    "django_celery_results",
     "apps.core",
     "apps.bookings",
     "apps.locations",
@@ -121,6 +122,30 @@ DATABASES = {
         "PORT": env("DATABASE_PORT", default="5432"),
     }
 }
+
+CACHES = {
+    "default": {
+        "BACKEND": "django_redis.cache.RedisCache",
+        "LOCATION": "redis://127.0.0.1:6379/1",
+        "OPTIONS": {
+            "CLIENT_CLASS": "django_redis.client.DefaultClient",
+        }
+    }
+}
+
+CELERY_BROKER_URL = "redis://127.0.0.1:6379/1"  # same Redis you already use for caching
+# CELERY_RESULT_BACKEND = "redis://127.0.0.1:6379/1"
+CELERY_RESULT_BACKEND = "django-db"   # store results in Django DB (POSTGRESQL)
+CELERY_TASK_ACKS_LATE = True             # if a worker crashes, the task will be re-queued
+CELERY_TASK_RESULT_EXPIRES = 604800                # clean up after 7 days
+CELERY_BROKER_TRANSPORT_OPTIONS = {
+    "visibility_timeout": 3600  # 3600 seconds = 1 hour
+} # if a worker crashes while processing a task, the task will be re-queued after 1 hour (default is 24 hours)
+
+
+
+FAST2SMS_API_KEY = env("FAST2SMS_API_KEY")
+TURNSTILE_SECRET_KEY = env("TURNSTILE_SECRET_KEY")  #
 
 
 # Password validation
