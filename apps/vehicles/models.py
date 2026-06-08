@@ -41,9 +41,15 @@ class VehicleType(BaseModel):
     transmission_type = models.CharField(
         max_length=20, choices=TransmissionType.choices
     )
-    vehicle_type = models.CharField(max_length=50, default=VehicleTypeChoices.SCOOTER, db_index=True, choices=VehicleTypeChoices.choices)  # "Sedan", "SUV"
-    primary_image = models.ImageField(upload_to="vehicle_type/images/",null=True,
-    blank=True)
+    vehicle_type = models.CharField(
+        max_length=50,
+        default=VehicleTypeChoices.SCOOTER,
+        db_index=True,
+        choices=VehicleTypeChoices.choices,
+    )  # "Sedan", "SUV"
+    primary_image = models.ImageField(
+        upload_to="vehicle_type/images/", null=True, blank=True
+    )
     fuel_type = models.CharField(max_length=20, choices=FuelType.choices)
     seats = models.PositiveSmallIntegerField()
     cc = models.PositiveIntegerField(help_text="Engine displacement in cc")
@@ -59,7 +65,6 @@ class VehicleType(BaseModel):
     )
 
     is_published = models.BooleanField(default=False, db_index=True)
-
 
     class Meta:
         unique_together = ("name", "make_year")
@@ -146,7 +151,6 @@ class VehicleListing(BaseModel):
         max_digits=8, decimal_places=2, null=True, blank=True
     )
 
-
     # Late return penalty
     late_return_penalty_per_hour = models.DecimalField(
         max_digits=8, decimal_places=2, null=True, blank=True
@@ -174,13 +178,13 @@ class VehicleListing(BaseModel):
         return f"{self.vendor.business_name} | {self.vehicle_type} @ {self.pickup_location}"
 
 
-
 class PackageCategory(BaseModel):
     """
     Admin-managed list of package categories.
     e.g. Hourly, Daily, Weekly, Monthly etc.
     """
-    name = models.CharField(max_length=50, unique=True)        # "Hourly", "Daily"
+
+    name = models.CharField(max_length=50, unique=True)  # "Hourly", "Daily"
     description = models.TextField(blank=True)
     sort_order = models.PositiveSmallIntegerField(default=0)
 
@@ -196,12 +200,13 @@ class PricingPackageType(BaseModel):
     Master list of package types (hourly, half-day, daily, etc.).
     Allows admin to manage available package types across the platform.
     """
+
     category = models.ForeignKey(
         PackageCategory,
-        on_delete=models.PROTECT,          # prevent deleting "Daily" if packages exist
-        related_name="package_types"
+        on_delete=models.PROTECT,  # prevent deleting "Daily" if packages exist
+        related_name="package_types",
     )
-    name = models.CharField(max_length=50, unique=True)        # "3-Hour", "6-Hour"
+    name = models.CharField(max_length=50, unique=True)  # "3-Hour", "6-Hour"
     description = models.TextField(blank=True)
     duration_hours = models.DecimalField(
         max_digits=5,
@@ -247,7 +252,7 @@ class PricingPackage(BaseModel):
 
     def __str__(self):
         return f"{self.listing} – {self.package_type} @ ₹{self.price}"
-    
+
 
 class ListingOperatingSchedule(BaseModel):
     """
@@ -255,28 +260,28 @@ class ListingOperatingSchedule(BaseModel):
     Vendor sets this once — it repeats every week automatically.
     If a day has no entry → that entire day is unavailable.
     """
-    class DayOfWeek(models.IntegerChoices):
-        MONDAY    = 0, "Monday"
-        TUESDAY   = 1, "Tuesday"
-        WEDNESDAY = 2, "Wednesday"
-        THURSDAY  = 3, "Thursday"
-        FRIDAY    = 4, "Friday"
-        SATURDAY  = 5, "Saturday"
-        SUNDAY    = 6, "Sunday"
 
-    listing          = models.ForeignKey(
-        VehicleListing, on_delete=models.CASCADE,
-        related_name="operating_schedule"
+    class DayOfWeek(models.IntegerChoices):
+        MONDAY = 0, "Monday"
+        TUESDAY = 1, "Tuesday"
+        WEDNESDAY = 2, "Wednesday"
+        THURSDAY = 3, "Thursday"
+        FRIDAY = 4, "Friday"
+        SATURDAY = 5, "Saturday"
+        SUNDAY = 6, "Sunday"
+
+    listing = models.ForeignKey(
+        VehicleListing, on_delete=models.CASCADE, related_name="operating_schedule"
     )
-    day_of_week      = models.IntegerField(choices=DayOfWeek.choices)
+    day_of_week = models.IntegerField(choices=DayOfWeek.choices)
 
     # null open_time = midnight (00:00), null close_time = midnight (24:00)
-    open_time        = models.TimeField(default=time(7, 0))
-    close_time       = models.TimeField(default=time(19, 0))
+    open_time = models.TimeField(default=time(7, 0))
+    close_time = models.TimeField(default=time(19, 0))
 
-    is_closed        = models.BooleanField(
+    is_closed = models.BooleanField(
         default=False,
-        help_text="If True, listing is fully unavailable this day regardless of times"
+        help_text="If True, listing is fully unavailable this day regardless of times",
     )
 
     class Meta:
@@ -289,30 +294,27 @@ class ListingBlockedPeriod(BaseModel):
     Specific date/time blocks — maintenance, holidays, personal use.
     Overrides the recurring schedule for that period.
     """
-    class BlockReason(models.TextChoices):
-        MAINTENANCE  = "MAINTENANCE",  "Maintenance"
-        PERSONAL_USE = "PERSONAL_USE", "Personal Use"
-        HOLIDAY      = "HOLIDAY",      "Holiday Closure"
-        OTHER        = "OTHER",        "Other"
 
-    listing    = models.ForeignKey(
-        VehicleListing, on_delete=models.CASCADE,
-        related_name="blocked_periods"
+    class BlockReason(models.TextChoices):
+        MAINTENANCE = "MAINTENANCE", "Maintenance"
+        PERSONAL_USE = "PERSONAL_USE", "Personal Use"
+        HOLIDAY = "HOLIDAY", "Holiday Closure"
+        OTHER = "OTHER", "Other"
+
+    listing = models.ForeignKey(
+        VehicleListing, on_delete=models.CASCADE, related_name="blocked_periods"
     )
     # Use datetime not just date — so vendor can block 7pm Dec 24 to 7am Dec 26
     start_datetime = models.DateTimeField(db_index=True)
-    end_datetime   = models.DateTimeField()
-    reason         = models.CharField(
-        max_length=20, choices=BlockReason.choices,
-        default=BlockReason.OTHER
+    end_datetime = models.DateTimeField()
+    reason = models.CharField(
+        max_length=20, choices=BlockReason.choices, default=BlockReason.OTHER
     )
-    note           = models.TextField(blank=True)
+    note = models.TextField(blank=True)
 
     class Meta:
         ordering = ["start_datetime"]
-        indexes = [
-            models.Index(fields=["listing", "start_datetime", "end_datetime"])
-        ]
+        indexes = [models.Index(fields=["listing", "start_datetime", "end_datetime"])]
 
     def clean(self):
         if self.end_datetime <= self.start_datetime:

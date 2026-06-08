@@ -10,13 +10,22 @@ from apps.vehicles.models import (
     VehicleListing,
     VehicleType,
     ListingOperatingSchedule,
-    ListingBlockedPeriod
+    ListingBlockedPeriod,
 )
 
 
 @admin.register(VehicleType)
 class VehicleTypeAdmin(SoftDeleteAdmin):
-    list_display = ("name", "brand", "make_year", "transmission_type", "fuel_type", "seats", "is_published", "is_deleted_display")
+    list_display = (
+        "name",
+        "brand",
+        "make_year",
+        "transmission_type",
+        "fuel_type",
+        "seats",
+        "is_published",
+        "is_deleted_display",
+    )
     list_filter = ("brand", "transmission_type", "fuel_type", "is_published")
     search_fields = ("name", "brand")
     readonly_fields = ("is_deleted_display",)
@@ -24,9 +33,20 @@ class VehicleTypeAdmin(SoftDeleteAdmin):
 
 @admin.register(VehicleListing)
 class VehicleListingAdmin(SoftDeleteAdmin):
-    list_display = ("vendor", "vehicle_type", "pickup_location", "status", "available_count", "is_deleted_display")
+    list_display = (
+        "vendor",
+        "vehicle_type",
+        "pickup_location",
+        "status",
+        "available_count",
+        "is_deleted_display",
+    )
     list_filter = ("status", "pickup_location__city", "doorstep_delivery_enabled")
-    search_fields = ("vendor__business_name", "vehicle_type__name", "pickup_location__name")
+    search_fields = (
+        "vendor__business_name",
+        "vehicle_type__name",
+        "pickup_location__name",
+    )
     readonly_fields = ("is_deleted_display", "approved_at", "suspended_at", "paused_at")
 
 
@@ -39,7 +59,13 @@ class PackageCategoryAdmin(SoftDeleteAdmin):
 
 @admin.register(PricingPackageType)
 class PricingPackageTypeAdmin(SoftDeleteAdmin):
-    list_display = ("name", "category", "duration_hours", "sort_order", "is_deleted_display")
+    list_display = (
+        "name",
+        "category",
+        "duration_hours",
+        "sort_order",
+        "is_deleted_display",
+    )
     list_filter = ("category",)
     search_fields = ("name",)
     readonly_fields = ("is_deleted_display",)
@@ -47,7 +73,13 @@ class PricingPackageTypeAdmin(SoftDeleteAdmin):
 
 @admin.register(PricingPackage)
 class PricingPackageAdmin(SoftDeleteAdmin):
-    list_display = ("listing", "package_type", "duration_hours", "price", "is_deleted_display")
+    list_display = (
+        "listing",
+        "package_type",
+        "duration_hours",
+        "price",
+        "is_deleted_display",
+    )
     list_filter = ("package_type",)
     search_fields = ("listing__vehicle_type__name",)
     readonly_fields = ("is_deleted_display",)
@@ -62,7 +94,13 @@ class DoorstepDeliveryTierAdmin(SoftDeleteAdmin):
 
 @admin.register(VehicleImage)
 class VehicleImageAdmin(SoftDeleteAdmin):
-    list_display = ("listing", "source", "sort_order", "is_primary", "is_deleted_display")
+    list_display = (
+        "listing",
+        "source",
+        "sort_order",
+        "is_primary",
+        "is_deleted_display",
+    )
     list_filter = ("source", "is_primary")
     search_fields = ("listing__vehicle_type__name",)
     readonly_fields = ("is_deleted_display",)
@@ -70,16 +108,15 @@ class VehicleImageAdmin(SoftDeleteAdmin):
 
 @admin.register(ListingOperatingSchedule)
 class ListingOperatingScheduleAdmin(SoftDeleteAdmin):
-    list_display = ("listing","day_of_week","open_time","close_time","is_closed")
-    list_filter = ("listing","is_closed")
+    list_display = ("listing", "day_of_week", "open_time", "close_time", "is_closed")
+    list_filter = ("listing", "is_closed")
     search_fields = ("listing__vehicle_type__name",)
     readonly_fields = ("is_deleted_display",)
 
 
 @admin.register(ListingBlockedPeriod)
 class ListingBlockedPeriodAdmin(SoftDeleteAdmin):
-    list_display = ("listing","start_datetime","end_datetime","reason","note")
+    list_display = ("listing", "start_datetime", "end_datetime", "reason", "note")
     list_filter = ("listing",)
     search_fields = ("listing__vehicle_type__name",)
     readonly_fields = ("is_deleted_display",)
-

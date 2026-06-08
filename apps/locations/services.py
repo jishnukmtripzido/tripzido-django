@@ -2,8 +2,10 @@
 
 from django.core.exceptions import ValidationError
 from apps.locations.repositories import (
-    CountryRepository, StateRepository,
-    CityRepository, PickupLocationRepository
+    CountryRepository,
+    StateRepository,
+    CityRepository,
+    PickupLocationRepository,
 )
 
 

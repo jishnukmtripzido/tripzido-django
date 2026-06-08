@@ -6,7 +6,13 @@ from apps.users.models import Role, Permission, RolePermission, User, UserRoleAs
 
 @admin.register(Role)
 class RoleAdmin(SoftDeleteAdmin):
-    list_display = ("system_role", "custom_name", "data_scope", "is_system", "is_deleted_display")
+    list_display = (
+        "system_role",
+        "custom_name",
+        "data_scope",
+        "is_system",
+        "is_deleted_display",
+    )
     list_filter = ("is_system", "data_scope")
     search_fields = ("system_role", "custom_name", "description")
     readonly_fields = ("is_deleted_display",)
@@ -30,7 +36,15 @@ class RolePermissionAdmin(SoftDeleteAdmin):
 
 @admin.register(User)
 class UserAdmin(SoftDeleteAdmin):
-    list_display = ("phone_number", "first_name", "last_name", "email", "status", "is_staff", "is_deleted_display")
+    list_display = (
+        "phone_number",
+        "first_name",
+        "last_name",
+        "email",
+        "status",
+        "is_staff",
+        "is_deleted_display",
+    )
     list_filter = ("status", "is_staff", "is_anonymised", "is_phone_blocked")
     search_fields = ("phone_number", "first_name", "last_name", "email")
     readonly_fields = ("is_deleted_display",)

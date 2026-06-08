@@ -101,7 +101,6 @@ class City(BaseModel):
     def __str__(self) -> str:
         """Return ``"<city name>, <state>"``."""
         return f"{self.name}, {self.state}"
-    
 
 
 class PickupLocation(BaseModel):

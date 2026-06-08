@@ -21,7 +21,6 @@ from apps.locations.models import City
 from django.contrib.auth.models import PermissionsMixin
 
 
-
 class Role(BaseModel):
     """
     Represents a platform role, either a built-in system role or a custom one.
@@ -146,7 +145,7 @@ class RolePermission(BaseModel):
         """Return a readable grant/deny summary for this mapping."""
         granted_symbol = "✓" if self.is_granted else "✗"
         return f"{self.role} → {self.permission} ({granted_symbol})"
-    
+
 
 class UserManager(BaseUserManager):
 
@@ -162,16 +161,16 @@ class UserManager(BaseUserManager):
         extra_fields.setdefault("is_staff", True)
         extra_fields.setdefault("is_active", True)
         user = self.model(phone_number=phone_number, **extra_fields)
-        user.set_password(password)    # superuser → real password
+        user.set_password(password)  # superuser → real password
         user.save(using=self._db)
         return user
-    
+
     def get_queryset(self):
         """Return a queryset filtered to only include active (non-soft-deleted) objects."""
         return super().get_queryset().filter(is_active=True)
 
 
-class User(AbstractBaseUser,PermissionsMixin, BaseModel):
+class User(AbstractBaseUser, PermissionsMixin, BaseModel):
     """
     Unified user model for all platform actors: Customer, Vendor, and Admin.
 
@@ -213,7 +212,9 @@ class User(AbstractBaseUser,PermissionsMixin, BaseModel):
         DELETED = "DELETED", "Deleted"
 
     phone_number = models.CharField(max_length=15, unique=True, db_index=True)
-    phone_country_code = models.CharField(max_length=5)  # e.g. "+1", "+91" for easier formatting later
+    phone_country_code = models.CharField(
+        max_length=5
+    )  # e.g. "+1", "+91" for easier formatting later
     first_name = models.CharField(max_length=50, blank=True)
     last_name = models.CharField(max_length=50, blank=True)
     email = models.EmailField(blank=True, null=True)
@@ -338,11 +339,13 @@ class UserRoleAssignment(BaseModel):
         related_name="role_assignments_given",
     )
 
-    class Meta:  
+    class Meta:
         """Ensure a user cannot be assigned the same role twice."""
 
         unique_together = ("user", "role")
 
     def __str__(self) -> str:
         """Return a readable summary of the user-to-role mapping."""
-        return f"{self.user.phone_number if self.user else 'Unknown User'} → {self.role}"
+        return (
+            f"{self.user.phone_number if self.user else 'Unknown User'} → {self.role}"
+        )

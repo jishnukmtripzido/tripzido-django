@@ -1,8 +1,9 @@
 from django.db import models
-from apps.core.models import (BaseModel)
+from apps.core.models import BaseModel
 from apps.users.models import User
 
 # Create your models here.
+
 
 class VendorCommission(BaseModel):
     """
@@ -33,7 +34,6 @@ class VendorCommission(BaseModel):
 
     def __str__(self):
         return f"{self.name} ({self.commission_type})"
-
 
 
 class SubscriptionPlan(BaseModel):
@@ -93,7 +93,7 @@ class SubscriptionPlan(BaseModel):
 
     def __str__(self):
         return f"{self.name} ({self.billing_cycle}) ₹{self.price}"
-    
+
     def save(self, *args, **kwargs):
         if self.is_default:
             SubscriptionPlan.objects.filter(is_default=True).update(is_default=False)
@@ -239,7 +239,9 @@ class BankAccount(BaseModel):
     status = models.CharField(
         max_length=20, choices=Status.choices, default=Status.PENDING_VERIFICATION
     )
-    is_active_acc = models.BooleanField(default=False)  # only one row is active at a time
+    is_active_acc = models.BooleanField(
+        default=False
+    )  # only one row is active at a time
 
     submitted_at = models.DateTimeField(auto_now_add=True)
     verified_by = models.ForeignKey(
@@ -262,14 +264,13 @@ class BankAccount(BaseModel):
         return (
             f"{self.vendor.business_name} – {self.account_number[-4:]} ({self.status})"
         )
-    
+
     def save(self, *args, **kwargs):
         if self.is_active_acc:
-            BankAccount.objects.filter(vendor=self.vendor, is_active_acc=True).update(is_active_acc=False)
+            BankAccount.objects.filter(vendor=self.vendor, is_active_acc=True).update(
+                is_active_acc=False
+            )
         super().save(*args, **kwargs)
-
-
-
 
 
 class VendorSubscription(BaseModel):
@@ -327,9 +328,10 @@ class VendorSubscription(BaseModel):
 
     def save(self, *args, **kwargs):
         if self.is_current:
-            VendorSubscription.objects.filter(vendor=self.vendor, is_current=True).update(is_current=False)
+            VendorSubscription.objects.filter(
+                vendor=self.vendor, is_current=True
+            ).update(is_current=False)
         super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.vendor.business_name} → {self.plan.name} ({self.status})"
-

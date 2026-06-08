@@ -4,7 +4,6 @@ from django.utils import timezone
 from django.contrib.auth.models import PermissionsMixin, AbstractBaseUser
 
 
-
 class SoftDeleteManager(models.Manager):
     """
     Custom manager that returns only active (non-deleted) records.
@@ -104,23 +103,20 @@ class BaseModel(SoftDeleteModel):
 
     created_at = models.DateTimeField(auto_now_add=True)
     created_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,  
+        settings.AUTH_USER_MODEL,
         null=True,
-        blank=True,       
+        blank=True,
         on_delete=models.PROTECT,
         related_name="%(class)s_created_by",
     )
     last_updated_at = models.DateTimeField(auto_now=True)
     last_updated_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,  
+        settings.AUTH_USER_MODEL,
         null=True,
-        blank=True,          
+        blank=True,
         on_delete=models.PROTECT,
         related_name="%(class)s_last_updated_by",
     )
-    
 
     class Meta:
         abstract = True
-
-

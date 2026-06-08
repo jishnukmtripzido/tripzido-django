@@ -1,9 +1,7 @@
 # apps/locations/filters.py
 
 import django_filters
-from apps.locations.models import City, State, PickupLocation,Country
-
-
+from apps.locations.models import City, State, PickupLocation, Country
 
 
 class CountryFilter(django_filters.FilterSet):
@@ -20,12 +18,12 @@ class CountryFilter(django_filters.FilterSet):
     """
 
     # range filters
-    name = django_filters.CharFilter(field_name="name",lookup_expr="icontains")
+    name = django_filters.CharFilter(field_name="name", lookup_expr="icontains")
 
     class Meta:
         model = Country
         fields = ["name"]
-        
+
 
 class CityFilter(django_filters.FilterSet):
     # exact filters

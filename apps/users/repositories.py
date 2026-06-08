@@ -1,8 +1,3 @@
-
-
-
-
-
 from .models import User
 
 

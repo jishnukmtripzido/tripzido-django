@@ -15,7 +15,6 @@ from drf_spectacular.types import OpenApiTypes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 
 
-
 class VehicleSearchView(GenericAPIView):
     serializer_class = VehicleSearchResultSerializer
 
@@ -30,7 +29,7 @@ class VehicleSearchView(GenericAPIView):
 
         if self.request.method == "GET":
             return [AllowAny()]
-        return [IsAuthenticated()] 
+        return [IsAuthenticated()]
 
     def get_queryset(self):
         return VehicleSearchService.search(

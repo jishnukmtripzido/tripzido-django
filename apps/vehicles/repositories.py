@@ -1,12 +1,12 @@
-
-
 from django.db.models import Prefetch
 from apps.vehicles.models import (
-    VehicleType, VehicleListing, PricingPackage,
-       ListingBlockedPeriod, ListingOperatingSchedule,
+    VehicleType,
+    VehicleListing,
+    PricingPackage,
+    ListingBlockedPeriod,
+    ListingOperatingSchedule,
 )
 from apps.vendors.models import Vendor
-
 
 
 class VehicleSearchRepository:
@@ -25,27 +25,28 @@ class VehicleSearchRepository:
     @staticmethod
     def get_listings_by_ids(listing_ids: list[int]):
         """Fetches full listing data for the given IDs with all relations."""
-        return VehicleListing.objects.filter(
-            id__in=listing_ids
-        ).select_related(
-            "pickup_location__city",
-            "vendor",
-        ).prefetch_related(
-            Prefetch(
-                "pricing_packages",
-                queryset=PricingPackage.objects.select_related(
-                    "package_type__category"
-                ).order_by("package_type__sort_order"),
-            ),
-            "images",
+        return (
+            VehicleListing.objects.filter(id__in=listing_ids)
+            .select_related(
+                "pickup_location__city",
+                "vendor",
+            )
+            .prefetch_related(
+                Prefetch(
+                    "pricing_packages",
+                    queryset=PricingPackage.objects.select_related(
+                        "package_type__category"
+                    ).order_by("package_type__sort_order"),
+                ),
+                "images",
+            )
         )
 
     @staticmethod
     def get_vehicle_types_for_listings(active_listings):
         """Returns published VehicleTypes that have listings in the given queryset."""
         return (
-            VehicleType.objects
-            .filter(is_published=True, listings__in=active_listings)
+            VehicleType.objects.filter(is_published=True, listings__in=active_listings)
             .distinct()
             .prefetch_related(
                 Prefetch(

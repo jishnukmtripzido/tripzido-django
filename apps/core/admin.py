@@ -4,7 +4,7 @@ from django.utils.safestring import mark_safe
 
 class SoftDeleteAdmin(admin.ModelAdmin):
     """Base admin class for all models with soft delete"""
-    
+
     def get_queryset(self, request):
         return self.model.all_objects.all()
 
@@ -16,5 +16,5 @@ class SoftDeleteAdmin(admin.ModelAdmin):
         if obj.is_deleted:
             return mark_safe('<span style="color:red;">🗑 Deleted</span>')
         return mark_safe('<span style="color:green;">✔ Active</span>')
-    
-    is_deleted_display.short_description = 'Status'
+
+    is_deleted_display.short_description = "Status"

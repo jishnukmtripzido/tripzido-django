@@ -60,7 +60,7 @@ class CityRepository:
     @staticmethod
     def get_all(filters: dict = None):
         queryset = City.objects.select_related("state").all()
-        return queryset   # return queryset, not list — views/filters need it
+        return queryset  # return queryset, not list — views/filters need it
 
     @staticmethod
     def get_by_id(city_id: int):
@@ -90,7 +90,9 @@ class PickupLocationRepository:
 
     @staticmethod
     def get_by_id(location_id: int):
-        return PickupLocation.objects.select_related("city").filter(id=location_id).first()
+        return (
+            PickupLocation.objects.select_related("city").filter(id=location_id).first()
+        )
 
     @staticmethod
     def create(data: dict):

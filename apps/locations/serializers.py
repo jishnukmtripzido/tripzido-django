@@ -61,6 +61,7 @@ class CountrySerializer(serializers.ModelSerializer):
 
 # ── State ────────────────────────────────────────────────────────────────────
 
+
 class StateSerializer(serializers.ModelSerializer):
     country_name = serializers.CharField(source="country.name", read_only=True)
 
@@ -126,6 +127,7 @@ class StateSerializer(serializers.ModelSerializer):
 
 # ── City ─────────────────────────────────────────────────────────────────────
 
+
 class CitySerializer(serializers.ModelSerializer):
     state_name = serializers.CharField(source="state.name", read_only=True)
     country_name = serializers.CharField(source="state.country.name", read_only=True)
@@ -148,7 +150,7 @@ class CitySerializer(serializers.ModelSerializer):
             "incorrect_type": "State ID must be an integer.",
         },
     )
-   
+
     city_image = serializers.ImageField(
         required=False,
         allow_null=True,
@@ -186,6 +188,7 @@ class CitySerializer(serializers.ModelSerializer):
 
 
 # ── Pickup Location ───────────────────────────────────────────────────────────
+
 
 class PickupLocationSerializer(serializers.ModelSerializer):
     city_name = serializers.CharField(source="city.name", read_only=True)
@@ -247,17 +250,13 @@ class PickupLocationSerializer(serializers.ModelSerializer):
     def validate_latitude(self, value):
         """Ensure latitude is in the WGS-84 range [-90, 90]."""
         if value is not None and not (-90 <= value <= 90):
-            raise serializers.ValidationError(
-                "Latitude must be between -90 and 90."
-            )
+            raise serializers.ValidationError("Latitude must be between -90 and 90.")
         return value
 
     def validate_longitude(self, value):
         """Ensure longitude is in the WGS-84 range [-180, 180]."""
         if value is not None and not (-180 <= value <= 180):
-            raise serializers.ValidationError(
-                "Longitude must be between -180 and 180."
-            )
+            raise serializers.ValidationError("Longitude must be between -180 and 180.")
         return value
 
     def validate(self, attrs: dict) -> dict:
@@ -273,7 +272,9 @@ class PickupLocationSerializer(serializers.ModelSerializer):
         # Lat/lng must be supplied together
         if (latitude is None) != (longitude is None):
             raise serializers.ValidationError(
-                {"latitude": "Latitude and longitude must both be provided or both left empty."}
+                {
+                    "latitude": "Latitude and longitude must both be provided or both left empty."
+                }
             )
 
         # unique_together: ('city', 'name')
@@ -282,7 +283,9 @@ class PickupLocationSerializer(serializers.ModelSerializer):
             qs = qs.exclude(pk=self.instance.pk)
         if qs.exists():
             raise serializers.ValidationError(
-                {"name": f"A pickup location named '{name}' already exists in this city."}
+                {
+                    "name": f"A pickup location named '{name}' already exists in this city."
+                }
             )
 
         return attrs

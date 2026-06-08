@@ -1,4 +1,3 @@
-
 # apps/vehicles/services.py
 
 from datetime import datetime, timedelta
@@ -18,7 +17,9 @@ class AvailabilityService:
         Used at booking time to give specific rejection reasons.
         """
         # 1. One-off blocks
-        if AvailabilityRepository.has_blocking_period(listing_id, pickup_dt, dropoff_dt):
+        if AvailabilityRepository.has_blocking_period(
+            listing_id, pickup_dt, dropoff_dt
+        ):
             return False, "Listing is blocked during this period"
 
         # 2. Recurring schedule

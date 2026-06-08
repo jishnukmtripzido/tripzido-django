@@ -18,7 +18,7 @@ env = environ.Env()
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-environ.Env.read_env(BASE_DIR / '.env')
+environ.Env.read_env(BASE_DIR / ".env")
 
 
 # Quick-start development settings - unsuitable for production
@@ -38,7 +38,7 @@ CORS_ALLOWED_ORIGINS = [
     "http://140.238.243.5",
     "http://192.168.1.4:3000",
     "http://192.168.1.2:3000",
-    "https://tripzido-next.vercel.app"
+    "https://tripzido-next.vercel.app",
 ]
 
 CORS_ALLOW_CREDENTIALS = True
@@ -46,8 +46,8 @@ CORS_ALLOW_CREDENTIALS = True
 CSRF_TRUSTED_ORIGINS = [
     "https://tripzido-django.onrender.com",
     "http://140.238.243.5:3000",
-    "http://localhost:3000",    
-    "https://tripzido-next.vercel.app"
+    "http://localhost:3000",
+    "https://tripzido-next.vercel.app",
 ]
 
 
@@ -73,8 +73,7 @@ INSTALLED_APPS = [
     "apps.reports",
     "apps.users",
     "apps.vendors",
-    "apps.vehicles"
- 
+    "apps.vehicles",
 ]
 
 MIDDLEWARE = [
@@ -129,19 +128,18 @@ CACHES = {
         "LOCATION": "redis://127.0.0.1:6379/1",
         "OPTIONS": {
             "CLIENT_CLASS": "django_redis.client.DefaultClient",
-        }
+        },
     }
 }
 
 CELERY_BROKER_URL = "redis://127.0.0.1:6379/1"  # same Redis you already use for caching
 # CELERY_RESULT_BACKEND = "redis://127.0.0.1:6379/1"
-CELERY_RESULT_BACKEND = "django-db"   # store results in Django DB (POSTGRESQL)
-CELERY_TASK_ACKS_LATE = True             # if a worker crashes, the task will be re-queued
-CELERY_TASK_RESULT_EXPIRES = 604800                # clean up after 7 days
+CELERY_RESULT_BACKEND = "django-db"  # store results in Django DB (POSTGRESQL)
+CELERY_TASK_ACKS_LATE = True  # if a worker crashes, the task will be re-queued
+CELERY_TASK_RESULT_EXPIRES = 604800  # clean up after 7 days
 CELERY_BROKER_TRANSPORT_OPTIONS = {
     "visibility_timeout": 3600  # 3600 seconds = 1 hour
-} # if a worker crashes while processing a task, the task will be re-queued after 1 hour (default is 24 hours)
-
+}  # if a worker crashes while processing a task, the task will be re-queued after 1 hour (default is 24 hours)
 
 
 FAST2SMS_API_KEY = env("FAST2SMS_API_KEY")
@@ -167,22 +165,20 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 
-
 REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",  # ← change this too
     ],
-    
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework_simplejwt.authentication.JWTAuthentication",  # ← add
     ],
     "DEFAULT_FILTER_BACKENDS": [
         "django_filters.rest_framework.DjangoFilterBackend",  # filtering
-        "rest_framework.filters.SearchFilter",                # searching
-        "rest_framework.filters.OrderingFilter",              # ordering
+        "rest_framework.filters.SearchFilter",  # searching
+        "rest_framework.filters.OrderingFilter",  # ordering
     ],
-     "DEFAULT_PAGINATION_CLASS": "apps.core.pagination.CustomPagination",
+    "DEFAULT_PAGINATION_CLASS": "apps.core.pagination.CustomPagination",
     "PAGE_SIZE": 10,
 }
 
@@ -191,17 +187,17 @@ from datetime import timedelta
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=300),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
-    "ROTATE_REFRESH_TOKENS": True,       # new refresh token on every refresh
-    "BLACKLIST_AFTER_ROTATION": True,    # old refresh token becomes invalid
-    "AUTH_HEADER_TYPES": ("Bearer",),    # Authorization: Bearer <token>
+    "ROTATE_REFRESH_TOKENS": True,  # new refresh token on every refresh
+    "BLACKLIST_AFTER_ROTATION": True,  # old refresh token becomes invalid
+    "AUTH_HEADER_TYPES": ("Bearer",),  # Authorization: Bearer <token>
 }
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "Tripzido API",
     "DESCRIPTION": "API documentation for Tripzido",
     "VERSION": "1.0.0",
-    "SECURITY": [{"BearerAuth": []}],                    # ← add
-    "COMPONENTS": {                                       # ← add
+    "SECURITY": [{"BearerAuth": []}],  # ← add
+    "COMPONENTS": {  # ← add
         "securitySchemes": {
             "BearerAuth": {
                 "type": "http",
@@ -210,11 +206,11 @@ SPECTACULAR_SETTINGS = {
             }
         }
     },
-      "SWAGGER_UI_SETTINGS": {
-        "persistAuthorization": True,    # token survives refresh ← your previous issue
+    "SWAGGER_UI_SETTINGS": {
+        "persistAuthorization": True,  # token survives refresh ← your previous issue
         "displayRequestDuration": True,  # shows how long each request took
-        "filter": True,                  # adds a search/filter bar for endpoints
-        "deepLinking": True,             # URL updates when you open an endpoint
+        "filter": True,  # adds a search/filter bar for endpoints
+        "deepLinking": True,  # URL updates when you open an endpoint
     },
 }
 
@@ -235,7 +231,6 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/6.0/howto/static-files/
 
 STATIC_URL = "static/"
-
 
 
 MEDIA_URL = "/media/"
