@@ -335,3 +335,58 @@ class VendorSubscription(BaseModel):
 
     def __str__(self):
         return f"{self.vendor.business_name} → {self.plan.name} ({self.status})"
+
+
+class VendorTerms(BaseModel):
+    """
+    Vendor-defined T&C and 'Things to Remember' for a listing (US-V10).
+    Versioned: a new record is created on every update.
+    """
+
+    listing = models.ForeignKey(
+        "vehicles.VehicleListing", on_delete=models.CASCADE, related_name="vendor_terms"
+    )
+    terms_items = models.JSONField(default=list)
+
+    # Structured "Things to Remember" (US-C07)
+    security_deposit_note = models.TextField(blank=True)
+    operating_hours_note = models.TextField(blank=True)
+    distance_limit_note = models.TextField(blank=True)
+    excess_charge_note = models.TextField(blank=True)
+    late_penalty_note = models.TextField(blank=True)
+
+    is_current = models.BooleanField(
+        default=True, db_index=True
+    )  # only latest is current
+    version = models.PositiveIntegerField(default=1)
+
+    class Meta:
+        ordering = ["-version"]
+
+    def save(self, *args, **kwargs):
+        latest_version = (
+            VendorTerms.objects.filter(listing=self.listing)
+            .order_by("-version")
+            .values_list("version", flat=True)
+            .first()
+            or 0
+        )
+
+        if self.pk is not None:
+            # Editing an existing record should create a new versioned row.
+            self.version = latest_version + 1
+            self.pk = None
+            self._state.adding = True
+            self.is_current = True
+        elif latest_version and self.version <= latest_version:
+            self.version = latest_version + 1
+
+        if self.is_current:
+            VendorTerms.objects.filter(listing=self.listing, is_current=True).update(
+                is_current=False
+            )
+
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"VendorTerms({self.listing}) v{self.version}"

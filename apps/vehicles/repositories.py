@@ -7,7 +7,7 @@ from apps.vehicles.models import (
     ListingBlockedPeriod,
     ListingOperatingSchedule,
 )
-from apps.vendors.models import Vendor
+from apps.vendors.models import Vendor, VendorTerms
 
 
 class VehicleSearchRepository:
@@ -132,10 +132,6 @@ class VehicleDetailRepository:
 
     @staticmethod
     def get_listing_by_id(listing_id: int):
-        """
-        Fetches a single approved listing with all relations needed
-        for the detail page.
-        """
         return (
             VehicleListing.objects.filter(
                 id=listing_id,
@@ -156,6 +152,11 @@ class VehicleDetailRepository:
                 Prefetch(
                     "images",
                     queryset=VehicleImage.objects.order_by("sort_order"),
+                ),
+                Prefetch(
+                    "vendor_terms",
+                    queryset=VendorTerms.objects.filter(is_current=True),
+                    to_attr="current_terms_list",  # gives us a plain list
                 ),
             )
             .first()

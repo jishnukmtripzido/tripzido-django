@@ -74,6 +74,7 @@ INSTALLED_APPS = [
     "apps.users",
     "apps.vendors",
     "apps.vehicles",
+    "apps.administrations",
 ]
 
 MIDDLEWARE = [

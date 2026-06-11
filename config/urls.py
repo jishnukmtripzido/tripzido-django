@@ -26,23 +26,23 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from django.conf.urls.static import static
 from django.conf import settings
 
-
-
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("api-auth/", include("rest_framework.urls")),
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     # Swagger UI
-    path("api/docs/", SpectacularSwaggerView.as_view(url_name="schema"), name="swagger-ui"),
+    path(
+        "api/docs/",
+        SpectacularSwaggerView.as_view(url_name="schema"),
+        name="swagger-ui",
+    ),
     # Redoc (alternative UI)
     path("api/redoc/", SpectacularRedocView.as_view(url_name="schema"), name="redoc"),
     path("api/token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
     path("api/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
     path("api/locations/", include("apps.locations.urls")),
-    path('api/vendors/',include('apps.vendors.urls')),
-    path("api/vehicles/",include("apps.vehicles.urls")),
+    path("api/vendors/", include("apps.vendors.urls")),
+    path("api/vehicles/", include("apps.vehicles.urls")),
     path("api/users/", include("apps.users.urls")),
+    path("api/administrations/", include("apps.administrations.urls")),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
-
-
-

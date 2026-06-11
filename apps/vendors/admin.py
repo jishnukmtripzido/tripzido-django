@@ -8,6 +8,7 @@ from apps.vendors.models import (
     VendorCommission,
     VendorDocument,
     VendorSubscription,
+    VendorTerms,
 )
 
 
@@ -20,7 +21,14 @@ class VendorCommissionAdmin(SoftDeleteAdmin):
 
 @admin.register(SubscriptionPlan)
 class SubscriptionPlanAdmin(SoftDeleteAdmin):
-    list_display = ("name", "billing_cycle", "price", "is_default", "sort_order", "is_deleted_display")
+    list_display = (
+        "name",
+        "billing_cycle",
+        "price",
+        "is_default",
+        "sort_order",
+        "is_deleted_display",
+    )
     list_filter = ("billing_cycle", "is_default")
     search_fields = ("name",)
     readonly_fields = ("is_deleted_display",)
@@ -28,10 +36,23 @@ class SubscriptionPlanAdmin(SoftDeleteAdmin):
 
 @admin.register(Vendor)
 class VendorAdmin(SoftDeleteAdmin):
-    list_display = ("business_name", "owner_name", "email", "phone_number", "status", "is_deleted_display")
+    list_display = (
+        "business_name",
+        "owner_name",
+        "email",
+        "phone_number",
+        "status",
+        "is_deleted_display",
+    )
     list_filter = ("status",)
     search_fields = ("business_name", "owner_name", "email", "phone_number")
-    readonly_fields = ("is_deleted_display", "tc_updated_at", "reviewed_at", "suspended_at", "banned_at")
+    readonly_fields = (
+        "is_deleted_display",
+        "tc_updated_at",
+        "reviewed_at",
+        "suspended_at",
+        "banned_at",
+    )
 
 
 @admin.register(VendorDocument)
@@ -44,7 +65,14 @@ class VendorDocumentAdmin(SoftDeleteAdmin):
 
 @admin.register(BankAccount)
 class BankAccountAdmin(SoftDeleteAdmin):
-    list_display = ("vendor", "account_holder_name", "bank_name", "status", "is_active_acc", "is_deleted_display")
+    list_display = (
+        "vendor",
+        "account_holder_name",
+        "bank_name",
+        "status",
+        "is_active_acc",
+        "is_deleted_display",
+    )
     list_filter = ("status", "is_active_acc")
     search_fields = ("vendor__business_name", "account_holder_name", "account_number")
     readonly_fields = ("is_deleted_display", "submitted_at", "verified_at")
@@ -52,7 +80,32 @@ class BankAccountAdmin(SoftDeleteAdmin):
 
 @admin.register(VendorSubscription)
 class VendorSubscriptionAdmin(SoftDeleteAdmin):
-    list_display = ("vendor", "plan", "status", "is_current", "amount_paid", "is_deleted_display")
+    list_display = (
+        "vendor",
+        "plan",
+        "status",
+        "is_current",
+        "amount_paid",
+        "is_deleted_display",
+    )
     list_filter = ("status", "is_current", "plan")
     search_fields = ("vendor__business_name", "plan__name")
     readonly_fields = ("is_deleted_display", "started_at", "expires_at", "cancelled_at")
+
+
+@admin.register(VendorTerms)
+class VendorTermsAdmin(SoftDeleteAdmin):
+    list_display = (
+        "listing",
+        "terms_items",
+        "security_deposit_note",
+        "operating_hours_note",
+        "distance_limit_note",
+        "excess_charge_note",
+        "late_penalty_note",
+        "is_current",
+        "version",
+    )
+    list_filter = ()
+    search_fields = ()
+    readonly_fields = ()
