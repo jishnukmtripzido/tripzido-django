@@ -125,14 +125,14 @@ DATABASES = {
 CACHES = {
     "default": {
         "BACKEND": "django_redis.cache.RedisCache",
-        "LOCATION": "redis://127.0.0.1:6379/1",
+        "LOCATION": env("CACHING_REDIS_URL"),
         "OPTIONS": {
             "CLIENT_CLASS": "django_redis.client.DefaultClient",
         },
     }
 }
 
-CELERY_BROKER_URL = "redis://127.0.0.1:6379/1"  # same Redis you already use for caching
+CELERY_BROKER_URL = env("CELERY_BROKER_URL")  # same Redis you already use for caching
 # CELERY_RESULT_BACKEND = "redis://127.0.0.1:6379/1"
 CELERY_RESULT_BACKEND = "django-db"  # store results in Django DB (POSTGRESQL)
 CELERY_TASK_ACKS_LATE = True  # if a worker crashes, the task will be re-queued
