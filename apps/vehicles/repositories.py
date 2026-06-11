@@ -1,5 +1,6 @@
 from django.db.models import Prefetch
 from apps.vehicles.models import (
+    VehicleImage,
     VehicleType,
     VehicleListing,
     PricingPackage,
@@ -125,3 +126,37 @@ class AvailabilityRepository:
             start_datetime__lt=dropoff_dt,
             end_datetime__gt=pickup_dt,
         ).exists()
+
+
+class VehicleDetailRepository:
+
+    @staticmethod
+    def get_listing_by_id(listing_id: int):
+        """
+        Fetches a single approved listing with all relations needed
+        for the detail page.
+        """
+        return (
+            VehicleListing.objects.filter(
+                id=listing_id,
+                status=VehicleListing.Status.APPROVED,
+            )
+            .select_related(
+                "vehicle_type",
+                "pickup_location__city",
+                "vendor",
+            )
+            .prefetch_related(
+                Prefetch(
+                    "pricing_packages",
+                    queryset=PricingPackage.objects.select_related(
+                        "package_type__category"
+                    ).order_by("package_type__sort_order"),
+                ),
+                Prefetch(
+                    "images",
+                    queryset=VehicleImage.objects.order_by("sort_order"),
+                ),
+            )
+            .first()
+        )

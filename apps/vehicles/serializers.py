@@ -194,3 +194,76 @@ class VehicleSearchResultSerializer(serializers.ModelSerializer):
         # Falls back to empty list if called outside search context
         listings = getattr(vehicle_type, "city_listings", [])
         return ListingLocationSerializer(listings, many=True).data
+
+
+# ── Vehicle Detail serializers ────────────────────────────────────────
+
+
+class VehicleDetailImageSerializer(serializers.ModelSerializer):
+    image_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = VehicleImage
+        fields = ["image_url", "is_primary", "sort_order"]
+
+    def get_image_url(self, obj):
+        request = self.context.get("request")
+        if request:
+            return request.build_absolute_uri(obj.image.url)
+        return obj.image.url
+
+
+class VehicleDetailPackageSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    name = serializers.CharField()
+    price_per_day = serializers.DecimalField(max_digits=10, decimal_places=2)
+    label = serializers.CharField()
+
+
+class FareDetailsSerializer(serializers.Serializer):
+    rent_amount = serializers.FloatField()
+    total = serializers.FloatField()
+    remaining_rent = serializers.FloatField()
+    advance_payment = serializers.FloatField()
+    refundable_deposit = serializers.FloatField()
+
+
+class VehiclePickupLocationSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    location_name = serializers.CharField()
+    exact_address_revealed_after_booking = serializers.BooleanField()
+    operating_hours = serializers.CharField()
+    latitude = serializers.FloatField(allow_null=True)
+    longitude = serializers.FloatField(allow_null=True)
+
+
+class VehiclePoliciesSerializer(serializers.Serializer):
+    security_deposit = serializers.FloatField()
+    distance_limit = serializers.CharField()
+    late_penalty_per_hour = serializers.FloatField()
+    location_timings = serializers.CharField()
+    excess_charge = serializers.CharField()
+
+
+class VehicleDetailSerializer(serializers.Serializer):
+    id = serializers.IntegerField()  # listing_id
+    name = serializers.CharField()
+    make_year = serializers.IntegerField()
+    transmission_type = serializers.CharField()
+    fuel_type = serializers.CharField()
+    seats = serializers.IntegerField()
+    cc = serializers.IntegerField()
+    mileage_kmpl = serializers.FloatField(allow_null=True)
+    top_speed_kmph = serializers.IntegerField(allow_null=True)
+    fuel_capacity_litres = serializers.FloatField(allow_null=True)
+    kerb_weight_kg = serializers.FloatField(allow_null=True)
+    km_limit_per_day = serializers.IntegerField(allow_null=True)
+    images = serializers.ListField(child=serializers.CharField())
+    primary_image = serializers.CharField(allow_null=True)
+    available_count = serializers.IntegerField()
+    packages = VehicleDetailPackageSerializer(many=True)
+    fare_details = FareDetailsSerializer()
+    pickup_location = VehiclePickupLocationSerializer()
+    policies = VehiclePoliciesSerializer()
+    terms_and_conditions = serializers.ListField(child=serializers.CharField())
+    pay_at_pickup_enabled = serializers.BooleanField()

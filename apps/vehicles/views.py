@@ -99,3 +99,44 @@ class VehicleSearchView(GenericAPIView):
                 errors=str(e),
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
+
+from apps.vehicles.services import VehicleSearchService, VehicleDetailService
+from apps.vehicles.serializers import (
+    VehicleSearchQuerySerializer,
+    VehicleSearchResultSerializer,
+    VehicleDetailSerializer,
+)
+
+
+class VehicleDetailView(GenericAPIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request, listing_id: int):
+        # These params are accepted but not used in the response yet —
+        # they're here so the URL contract matches the frontend call.
+        # They'll drive fare calculation once that's dynamic.
+        # location_id = request.query_params.get("location_id")
+        # pickup = request.query_params.get("pickup_datetime")
+        # dropoff = request.query_params.get("dropoff_datetime")
+
+        # if not all([location_id]):
+        #     return error_response(
+        #         message="location_id is required",
+        #         status=status.HTTP_400_BAD_REQUEST,
+        #     )
+
+        data = VehicleDetailService.get_vehicle_detail(listing_id, request=request)
+
+        if data is None:
+            return error_response(
+                message="Vehicle listing not found",
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        serializer = VehicleDetailSerializer(data)
+        return success_response(
+            data=serializer.data,
+            message="Vehicle details retrieved successfully",
+            status=status.HTTP_200_OK,
+        )
