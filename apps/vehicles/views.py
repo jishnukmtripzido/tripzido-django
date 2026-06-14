@@ -7,12 +7,18 @@ from django.core.exceptions import ValidationError
 from apps.vehicles.serializers import (
     VehicleSearchQuerySerializer,
     VehicleSearchResultSerializer,
+    VehicleReviewItemSerializer,
 )
-from apps.vehicles.services import VehicleSearchService
+from apps.vehicles.services import (
+    VehicleSearchService,
+    VehicleReviewService,
+    VehicleReviewService,
+)
 from apps.core.responses import success_response, error_response
 from drf_spectacular.utils import extend_schema, OpenApiParameter
 from drf_spectacular.types import OpenApiTypes
 from rest_framework.permissions import AllowAny, IsAuthenticated
+from apps.core.pagination import CustomPagination
 
 
 class VehicleSearchView(GenericAPIView):
@@ -140,3 +146,34 @@ class VehicleDetailView(GenericAPIView):
             message="Vehicle details retrieved successfully",
             status=status.HTTP_200_OK,
         )
+
+
+class VehicleReviewsView(GenericAPIView):
+    permission_classes = [AllowAny]
+    serializer_class = VehicleReviewItemSerializer
+    pagination_class = CustomPagination
+
+    def get(self, request, listing_id: int):
+        try:
+            data = VehicleReviewService.get_listing_reviews(listing_id)
+
+            page = self.paginate_queryset(data["reviews_queryset"])
+            serializer = self.get_serializer(page, many=True)
+            paginated_response = self.get_paginated_response(serializer.data)
+
+            response_data = {
+                "average_rating": data["average_rating"],
+                **paginated_response.data,  # adds "pagination" and "results"
+            }
+
+            return success_response(
+                data=response_data,
+                message="Reviews retrieved successfully",
+                status=status.HTTP_200_OK,
+            )
+        except Exception as e:
+            return error_response(
+                message="Failed to retrieve reviews",
+                errors=str(e),
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )

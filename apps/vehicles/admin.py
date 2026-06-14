@@ -11,6 +11,7 @@ from apps.vehicles.models import (
     VehicleType,
     ListingOperatingSchedule,
     ListingBlockedPeriod,
+    VehicleReview,
 )
 
 
@@ -120,3 +121,69 @@ class ListingBlockedPeriodAdmin(SoftDeleteAdmin):
     list_filter = ("listing",)
     search_fields = ("listing__vehicle_type__name",)
     readonly_fields = ("is_deleted_display",)
+
+
+@admin.register(VehicleReview)
+class VehicleReviewAdmin(SoftDeleteAdmin):
+    list_display = (
+        "id",
+        "listing",
+        "customer",
+        "rating",
+        "moderation_status",
+        "created_at",
+        "moderated_by",
+        "is_deleted_display",
+    )
+    list_filter = ("moderation_status", "rating", "listing__pickup_location__city")
+    search_fields = (
+        "listing__vehicle_type__name",
+        "customer__phone_number",
+        "customer__first_name",
+        "customer__last_name",
+        "review_text",
+    )
+    readonly_fields = (
+        "created_at",
+        "is_deleted_display",
+    )
+    fields = (
+        "booking",
+        "customer",
+        "listing",
+        "rating",
+        "review_text",
+        "moderation_status",
+        "moderation_note",
+        "moderated_by",
+        "moderated_at",
+        "created_at",
+        "is_deleted_display",
+    )
+    actions = ["approve_reviews", "remove_reviews", "flag_reviews"]
+
+    def _set_moderation_status(self, request, queryset, status_value, status_label):
+        updated = queryset.update(
+            moderation_status=status_value,
+            moderated_by=request.user,
+            moderated_at=timezone.now(),
+        )
+        self.message_user(request, f"{updated} review(s) marked as {status_label}.")
+
+    @admin.action(description="Approve selected reviews")
+    def approve_reviews(self, request, queryset):
+        self._set_moderation_status(
+            request, queryset, VehicleReview.ModerationStatus.APPROVED, "Approved"
+        )
+
+    @admin.action(description="Remove selected reviews")
+    def remove_reviews(self, request, queryset):
+        self._set_moderation_status(
+            request, queryset, VehicleReview.ModerationStatus.REMOVED, "Removed"
+        )
+
+    @admin.action(description="Flag selected reviews for review")
+    def flag_reviews(self, request, queryset):
+        self._set_moderation_status(
+            request, queryset, VehicleReview.ModerationStatus.FLAGGED, "Flagged"
+        )

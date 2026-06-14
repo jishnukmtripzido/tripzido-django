@@ -271,3 +271,20 @@ class VehicleDetailService:
             ),
             "pay_at_pickup_enabled": pay_at_pickup_enabled,
         }
+
+
+class VehicleReviewService:
+
+    @staticmethod
+    def get_listing_reviews(listing_id: int) -> dict:
+        from apps.vehicles.repositories import VehicleReviewRepository
+
+        aggregates = VehicleReviewRepository.get_rating_aggregates(listing_id)
+        average_rating = aggregates["average_rating"] or 0
+
+        reviews_queryset = VehicleReviewRepository.get_approved_reviews(listing_id)
+
+        return {
+            "average_rating": round(float(average_rating), 1),
+            "reviews_queryset": reviews_queryset,
+        }

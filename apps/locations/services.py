@@ -104,6 +104,12 @@ class PickupLocationService:
         return PickupLocationRepository.get_all()
 
     @staticmethod
+    def get_by_city(city_id: int):
+        if not city_id:
+            raise ValidationError("city_id is required.")
+        return PickupLocationRepository.get_by_city(city_id)
+
+    @staticmethod
     def get_by_id(location_id: int):
         location = PickupLocationRepository.get_by_id(location_id)
         if not location:

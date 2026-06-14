@@ -267,3 +267,31 @@ class VehicleDetailSerializer(serializers.Serializer):
     policies = VehiclePoliciesSerializer()
     terms_and_conditions = serializers.ListField(child=serializers.CharField())
     pay_at_pickup_enabled = serializers.BooleanField()
+
+
+class VehicleReviewItemSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    author_name = serializers.SerializerMethodField()
+    rating = serializers.IntegerField()
+    comment = serializers.CharField(source="review_text")
+    created_at = serializers.DateTimeField()
+    vehicle_name = serializers.SerializerMethodField()
+
+    def get_author_name(self, review):
+        customer = review.customer
+
+        if customer.is_anonymised:
+            return "Tripzido User"
+
+        first = customer.first_name.strip()
+        last = customer.last_name.strip()
+
+        if not first and not last:
+            return "Tripzido User"
+
+        if first and last:
+            return f"{first} {last[0]}."
+        return first or last
+
+    def get_vehicle_name(self, review):
+        return review.listing.vehicle_type.name

@@ -14,6 +14,7 @@ from apps.locations.serializers import (
     StateSerializer,
     CitySerializer,
     PickupLocationSerializer,
+    PickupLocationOptionSerializer,
 )
 from apps.locations.services import (
     CountryService,
@@ -22,6 +23,8 @@ from apps.locations.services import (
     PickupLocationService,
 )
 from apps.core.responses import error_response, success_response
+from drf_spectacular.utils import extend_schema, OpenApiParameter
+from drf_spectacular.types import OpenApiTypes
 
 # ─── Country ────────────────────────────────────────────────────────────────
 
@@ -556,3 +559,52 @@ class PickupLocationDetailView(APIView):
             message="Pickup location deleted successfully",
             status=status.HTTP_204_NO_CONTENT,
         )
+
+
+class PickupLocationsByCityView(GenericAPIView):
+    """
+    Returns a flat list of pickup locations for a given city.
+    Used by the vehicle-details search-modify bar's location selector.
+    Unpaginated by design — a city's pickup locations is a small, bounded list.
+    """
+
+    serializer_class = PickupLocationOptionSerializer
+    permission_classes = [AllowAny]
+
+    def get(self, request, city_id):
+        # city_id = request.body.get("city_id")
+
+        if not city_id:
+            return error_response(
+                message="city_id is required",
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            city_id = int(city_id)
+        except ValueError:
+            return error_response(
+                message="city_id must be an integer",
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            locations = PickupLocationService.get_by_city(city_id)
+            serializer = self.get_serializer(locations, many=True)
+            return success_response(
+                data=serializer.data,
+                message="Pickup locations retrieved successfully",
+                status=status.HTTP_200_OK,
+            )
+        except ValidationError as e:
+            return error_response(
+                message="Invalid request",
+                errors=str(e),
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception as e:
+            return error_response(
+                message="Failed to retrieve pickup locations",
+                errors=str(e),
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )

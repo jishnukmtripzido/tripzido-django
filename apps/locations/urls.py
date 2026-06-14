@@ -10,6 +10,7 @@ from apps.locations.views import (
     CityDetailView,
     PickupLocationListCreateView,
     PickupLocationDetailView,
+    PickupLocationsByCityView,
 )
 
 urlpatterns = [
@@ -19,6 +20,11 @@ urlpatterns = [
     path("states/<int:pk>/", StateDetailView.as_view(), name="state-detail"),
     path("cities/", CityListCreateView.as_view(), name="city-list"),
     path("cities/<int:pk>/", CityDetailView.as_view(), name="city-detail"),
+    path(
+        "pickup-locations/by-city/<city_id>/",
+        PickupLocationsByCityView.as_view(),
+        name="pickup-locations-by-city",
+    ),
     path(
         "pickup-locations/", PickupLocationListCreateView.as_view(), name="pickup-list"
     ),

@@ -289,3 +289,18 @@ class PickupLocationSerializer(serializers.ModelSerializer):
             )
 
         return attrs
+
+
+class PickupLocationOptionSerializer(serializers.ModelSerializer):
+    """
+    Minimal shape used by the location selector on the vehicle-details
+    search-modify bar. Matches frontend's PickupLocationOption type:
+    { id, location_name, city_id }
+    """
+
+    location_name = serializers.CharField(source="name")
+    city_id = serializers.IntegerField(source="city.id")
+
+    class Meta:
+        model = PickupLocation
+        fields = ["id", "location_name", "city_id"]

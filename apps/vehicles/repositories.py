@@ -6,8 +6,10 @@ from apps.vehicles.models import (
     PricingPackage,
     ListingBlockedPeriod,
     ListingOperatingSchedule,
+    VehicleReview,
 )
 from apps.vendors.models import Vendor, VendorTerms
+from django.db.models import Avg, Count
 
 
 class VehicleSearchRepository:
@@ -161,3 +163,29 @@ class VehicleDetailRepository:
             )
             .first()
         )
+
+
+class VehicleReviewRepository:
+
+    @staticmethod
+    def get_rating_aggregates(listing_id: int) -> dict:
+        """Average rating + count of approved reviews for a listing."""
+        return VehicleReview.objects.filter(
+            listing_id=listing_id,
+            moderation_status=VehicleReview.ModerationStatus.APPROVED,
+        ).aggregate(average_rating=Avg("rating"), total_count=Count("id"))
+
+    @staticmethod
+    def get_approved_reviews(listing_id: int, limit: int | None = None):
+        """Approved reviews for a listing, most recent first."""
+        queryset = (
+            VehicleReview.objects.filter(
+                listing_id=listing_id,
+                moderation_status=VehicleReview.ModerationStatus.APPROVED,
+            )
+            .select_related("customer", "listing__vehicle_type")
+            .order_by("-created_at")
+        )
+        if limit is not None:
+            queryset = queryset[:limit]
+        return queryset

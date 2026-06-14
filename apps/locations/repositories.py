@@ -89,6 +89,11 @@ class PickupLocationRepository:
         return PickupLocation.objects.select_related("city").all()
 
     @staticmethod
+    def get_by_city(city_id: int):
+        """All pickup locations within a city"""
+        return PickupLocation.objects.filter(city_id=city_id).select_related("city")
+
+    @staticmethod
     def get_by_id(location_id: int):
         return (
             PickupLocation.objects.select_related("city").filter(id=location_id).first()

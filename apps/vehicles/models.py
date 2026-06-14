@@ -5,6 +5,7 @@ from apps.vendors.models import Vendor
 from apps.locations.models import PickupLocation
 from datetime import time
 from django.core.exceptions import ValidationError
+from django.core.validators import MaxValueValidator, MinValueValidator
 
 
 # Create your models here.
@@ -384,3 +385,53 @@ class VehicleImage(BaseModel):
 
     def __str__(self):
         return f"Image({self.listing}) #{self.sort_order}"
+
+
+class VehicleReview(BaseModel):
+    """
+    Customer review for a completed booking.
+    One review per booking (enforced at model level).
+    """
+
+    class ModerationStatus(models.TextChoices):
+        PENDING = "PENDING", "Pending Moderation"
+        APPROVED = "APPROVED", "Approved – Visible"
+        REMOVED = "REMOVED", "Removed by Admin"
+        FLAGGED = "FLAGGED", "Flagged for Review"
+
+    # booking is defined in booking.py; we use string reference to avoid circular import
+    booking = models.ForeignKey(
+        "bookings.Booking", on_delete=models.CASCADE, related_name="reviews"
+    )
+    customer = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name="reviews_given"
+    )
+    listing = models.ForeignKey(
+        VehicleListing, on_delete=models.CASCADE, related_name="reviews"
+    )
+
+    rating = models.PositiveSmallIntegerField(
+        validators=[MinValueValidator(1), MaxValueValidator(5)]
+    )
+    review_text = models.TextField(blank=True)
+
+    moderation_status = models.CharField(
+        max_length=20,
+        choices=ModerationStatus.choices,
+        default=ModerationStatus.PENDING,
+    )
+    moderation_note = models.TextField(blank=True)  # admin internal note
+    moderated_by = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="reviews_moderated",
+    )
+    moderated_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"Review(booking={self.booking_id}) {self.rating}★"
