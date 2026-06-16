@@ -129,6 +129,21 @@ class AvailabilityRepository:
             end_datetime__gt=pickup_dt,
         ).exists()
 
+    @staticmethod
+    def get_packages_for_listings(listing_ids: list[int]):
+        """
+        Returns PricingPackage queryset for given listings, restricted to
+        packages whose category is 'daily' OR whose package_type.duration_hours
+        will be matched in Python (duration_hours is a Decimal, exact match
+        is cheap enough to do here too, but we keep this broad and filter
+        in the service to avoid float/decimal mismatches across DBs).
+        """
+        return (
+            PricingPackage.objects.filter(listing_id__in=listing_ids)
+            .select_related("package_type__category")
+            .order_by("listing_id", "package_type__sort_order")
+        )
+
 
 class VehicleDetailRepository:
 

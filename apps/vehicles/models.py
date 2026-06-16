@@ -246,6 +246,7 @@ class PricingPackage(BaseModel):
         blank=True,
         help_text="% of total to collect upfront when partial payment selected",
     )
+    km_limit = models.PositiveIntegerField(default=None, null=True, blank=True)
     # is_active = models.BooleanField(default=True)
 
     class Meta:

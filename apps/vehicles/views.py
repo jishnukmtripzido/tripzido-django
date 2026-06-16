@@ -119,18 +119,12 @@ class VehicleDetailView(GenericAPIView):
     permission_classes = [AllowAny]
 
     def get(self, request, listing_id: int):
-        # These params are accepted but not used in the response yet —
-        # they're here so the URL contract matches the frontend call.
-        # They'll drive fare calculation once that's dynamic.
-        # location_id = request.query_params.get("location_id")
-        # pickup = request.query_params.get("pickup_datetime")
-        # dropoff = request.query_params.get("dropoff_datetime")
 
-        # if not all([location_id]):
-        #     return error_response(
-        #         message="location_id is required",
-        #         status=status.HTTP_400_BAD_REQUEST,
-        #     )
+        if not listing_id:
+            return error_response(
+                message="listing_id is required",
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         data = VehicleDetailService.get_vehicle_detail(listing_id, request=request)
 

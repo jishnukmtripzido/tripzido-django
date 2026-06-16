@@ -112,7 +112,7 @@ class ListingLocationSerializer(serializers.ModelSerializer):
     # Daily price surfaced to the top so the card can display it
     # without the frontend having to dig through pricing_packages
     daily_price = serializers.SerializerMethodField()
-    pricing_packages = PricingPackageSerializer(many=True, read_only=True)
+    pricing_packages = serializers.SerializerMethodField()
     pay_at_pickup_enabled = serializers.SerializerMethodField()
 
     class Meta:
@@ -139,25 +139,21 @@ class ListingLocationSerializer(serializers.ModelSerializer):
             "pay_at_pickup_enabled",
         ]
 
+    def get_pricing_packages(self, listing):
+        pkg = getattr(listing, "matched_package", None)
+        if pkg is None:
+            return []
+        return PricingPackageSerializer([pkg], many=True).data
+
     def get_daily_price(self, listing):
-        """
-        Picks the first package whose category name is 'Daily'.
-        All packages are already prefetched — no extra query.
-        """
-        for pkg in listing.pricing_packages.all():
-            if pkg.package_type.category.name.lower() == "daily":
-                return str(pkg.price)
+        pkg = getattr(listing, "matched_package", None)
+        if pkg and pkg.package_type.category.name.lower() == "daily":
+            return str(pkg.price)
         return None
 
     def get_pay_at_pickup_enabled(self, listing):
-        """
-        If any package has pay_at_pickup_enabled=True, we consider the listing as a whole to have that option.
-        This simplifies frontend logic, so it doesn't have to check each package.
-        """
-        for pkg in listing.pricing_packages.all():
-            if pkg.pay_at_pickup_enabled:
-                return True
-        return False
+        pkg = getattr(listing, "matched_package", None)
+        return bool(pkg and pkg.pay_at_pickup_enabled)
 
 
 # ── Root search result (one per VehicleType) ──────────────────────────
