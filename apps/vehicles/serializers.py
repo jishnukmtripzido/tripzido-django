@@ -3,6 +3,7 @@
 from rest_framework import serializers
 from django.utils.dateparse import parse_datetime
 from datetime import datetime
+from decimal import Decimal
 
 from apps.vehicles.models import (
     VehicleListing,
@@ -69,15 +70,46 @@ class VehicleImageSerializer(serializers.ModelSerializer):
         fields = ["id", "image", "is_primary", "sort_order"]
 
 
+def _format_duration(total_hours: Decimal) -> str:
+    """e.g. '2 months', '2 weeks', '1 day 6 hours', '45 minutes'.
+
+    Months are approximated as 30 days since hours don't map onto
+    calendar months cleanly — fine for a human-readable label, not
+    meant for billing math.
+    """
+    total_minutes = int((total_hours * 60).to_integral_value())
+
+    months, rem = divmod(total_minutes, 30 * 24 * 60)
+    weeks, rem = divmod(rem, 7 * 24 * 60)
+    days, rem = divmod(rem, 24 * 60)
+    hours, minutes = divmod(rem, 60)
+
+    parts = []
+    if months:
+        parts.append(f"{months} month{'s' if months != 1 else ''}")
+    if weeks:
+        parts.append(f"{weeks} week{'s' if weeks != 1 else ''}")
+    if days:
+        parts.append(f"{days} day{'s' if days != 1 else ''}")
+    if hours:
+        parts.append(f"{hours} hour{'s' if hours != 1 else ''}")
+    if minutes:
+        parts.append(f"{minutes} minute{'s' if minutes != 1 else ''}")
+
+    return " ".join(parts) if parts else "0 minutes"
+
+
 class PricingPackageSerializer(serializers.ModelSerializer):
     package_name = serializers.CharField(source="package_type.name")
     category = serializers.CharField(source="package_type.category.name")
-    # Use the package_type's duration_hours as the canonical duration
     duration_hours = serializers.DecimalField(
         source="package_type.duration_hours",
         max_digits=5,
         decimal_places=2,
     )
+    total_price = serializers.SerializerMethodField()
+    total_km_limit = serializers.SerializerMethodField()
+    total_duration = serializers.SerializerMethodField()
 
     class Meta:
         model = PricingPackage
@@ -87,9 +119,30 @@ class PricingPackageSerializer(serializers.ModelSerializer):
             "category",
             "duration_hours",
             "price",
-            "pay_at_pickup_enabled",  # now lives on PricingPackage
-            "partial_payment_percentage",  # now lives on PricingPackage
+            "total_price",
+            "pay_at_pickup_enabled",
+            "partial_payment_percentage",
+            "km_limit",
+            "total_km_limit",
+            "total_duration",
         ]
+
+    def _multiplier(self, obj) -> Decimal:
+        # Set in VehicleSearchService.search(); defaults to 1 if this
+        # serializer is ever reused outside that flow.
+        return getattr(obj, "matched_multiplier", Decimal("1"))
+
+    def get_total_price(self, obj):
+        return str(obj.price * self._multiplier(obj))
+
+    def get_total_km_limit(self, obj):
+        if not obj.km_limit:
+            return "No Distance Limit"
+        return f"({int(obj.km_limit * self._multiplier(obj))} km included)"
+
+    def get_total_duration(self, obj):
+        hours = getattr(obj, "searched_duration_hours", None)
+        return _format_duration(hours) if hours is not None else None
 
 
 # ── Per-location listing card ─────────────────────────────────────────

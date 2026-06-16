@@ -1,7 +1,7 @@
 # apps/vehicles/services.py
 
 from datetime import datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, ROUND_CEILING
 from apps.vehicles.repositories import VehicleSearchRepository, AvailabilityRepository
 
 
@@ -91,12 +91,21 @@ class AvailabilityService:
     def pick_package_for_listings(
         listing_ids: list[int],
         duration_hours: Decimal,
-    ) -> dict[int, "PricingPackage"]:
+    ) -> dict[int, tuple["PricingPackage", Decimal]]:
         """
-        For each listing, picks exactly one PricingPackage:
-          1. Exact duration_hours match (any category)
-          2. Else the listing's Daily package
-          3. Else listing is excluded (no entry in returned dict)
+        For each listing, picks exactly one PricingPackage and the multiplier
+        needed to cover the searched duration:
+
+        1. Exact duration_hours match (any category) -> multiplier 1.
+        2. Else, among packages whose duration_hours divides evenly into the
+            searched duration (e.g. a 3h package against a 6h search, or a
+            168h/weekly package against a 336h search), pick whichever gives
+            the cheapest total price. Multiplier = duration_hours / pkg duration.
+        3. Else fall back to the listing's Daily package, rounded UP to the
+            nearest whole day so the full duration is covered.
+        4. Else listing is excluded (no entry in returned dict).
+
+        Returns {listing_id: (package, multiplier)}.
         """
         packages = AvailabilityRepository.get_packages_for_listings(listing_ids)
 
@@ -106,20 +115,38 @@ class AvailabilityService:
 
         result = {}
         for listing_id, pkgs in by_listing.items():
+            # 1. Exact match
             exact = next(
                 (p for p in pkgs if p.package_type.duration_hours == duration_hours),
                 None,
             )
             if exact:
-                result[listing_id] = exact
+                result[listing_id] = (exact, Decimal("1"))
                 continue
 
+            # 2. Multiplication match: searched duration is a whole number of
+            # package units. Cheapest total wins among qualifying packages.
+            candidates = []
+            for p in pkgs:
+                pkg_hours = p.package_type.duration_hours
+                if pkg_hours > 0 and duration_hours % pkg_hours == 0:
+                    multiplier = duration_hours / pkg_hours
+                    candidates.append((p, multiplier, p.price * multiplier))
+
+            if candidates:
+                best_pkg, best_multiplier, _ = min(candidates, key=lambda c: c[2])
+                result[listing_id] = (best_pkg, best_multiplier)
+                continue
+
+            # 3. Daily fallback — round up to fully cover the duration
             daily = next(
                 (p for p in pkgs if p.package_type.category.name.lower() == "daily"),
                 None,
             )
             if daily:
-                result[listing_id] = daily
+                units = duration_hours / daily.package_type.duration_hours
+                multiplier = units.to_integral_value(rounding=ROUND_CEILING)
+                result[listing_id] = (daily, multiplier)
 
         return result
 
@@ -139,29 +166,32 @@ class VehicleSearchService:
         if not available_ids:
             return []
 
-        duration_hours = Decimal(
-            str((dropoff_datetime - pickup_datetime).total_seconds() / 3600)
-        )
+        diff = dropoff_datetime - pickup_datetime
+        duration_hours = (
+            Decimal(diff.days * 24)
+            + Decimal(diff.seconds) / Decimal(3600)
+            + Decimal(diff.microseconds) / Decimal(3_600_000_000)
+        ).quantize(
+            Decimal("0.01")
+        )  # match package_type.duration_hours precision
 
-        matched_packages = AvailabilityService.pick_package_for_listings(
+        matched = AvailabilityService.pick_package_for_listings(
             available_ids, duration_hours
         )
 
-        # listings with no matching package (no exact + no daily) are dropped
-        final_ids = [lid for lid in available_ids if lid in matched_packages]
+        final_ids = [lid for lid in available_ids if lid in matched]
 
         active_listings = VehicleSearchRepository.get_listings_by_ids(final_ids)
-
         vehicle_types = VehicleSearchRepository.get_vehicle_types_for_listings(
             active_listings
         )
 
-        # attach the single matched package onto each listing so the
-        # serializer's existing `pricing_packages = pkg.pricing_packages.all()`
-        # only sees one item
         listings_by_id = {l.id: l for vt in vehicle_types for l in vt.city_listings}
         for listing_id, listing in listings_by_id.items():
-            listing.matched_package = matched_packages[listing_id]
+            pkg, multiplier = matched[listing_id]
+            listing.matched_package = pkg
+            pkg.matched_multiplier = multiplier
+            pkg.searched_duration_hours = duration_hours
 
         return vehicle_types
 
