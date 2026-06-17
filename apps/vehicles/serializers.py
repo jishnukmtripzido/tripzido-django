@@ -11,6 +11,7 @@ from apps.vehicles.models import (
     VehicleImage,
     PricingPackage,
 )
+from apps.vehicles.utils import format_duration
 
 # ── Query param validation ────────────────────────────────────────────
 
@@ -19,6 +20,7 @@ class VehicleSearchQuerySerializer(serializers.Serializer):
     city_id = serializers.IntegerField(min_value=1)
     pickup_datetime = serializers.DateTimeField()
     dropoff_datetime = serializers.DateTimeField()
+    vehicle_type_id = serializers.IntegerField(min_value=1, required=False)
 
     def validate(self, attrs):
         pickup = attrs["pickup_datetime"]
@@ -70,35 +72,6 @@ class VehicleImageSerializer(serializers.ModelSerializer):
         fields = ["id", "image", "is_primary", "sort_order"]
 
 
-def _format_duration(total_hours: Decimal) -> str:
-    """e.g. '2 months', '2 weeks', '1 day 6 hours', '45 minutes'.
-
-    Months are approximated as 30 days since hours don't map onto
-    calendar months cleanly — fine for a human-readable label, not
-    meant for billing math.
-    """
-    total_minutes = int((total_hours * 60).to_integral_value())
-
-    months, rem = divmod(total_minutes, 30 * 24 * 60)
-    weeks, rem = divmod(rem, 7 * 24 * 60)
-    days, rem = divmod(rem, 24 * 60)
-    hours, minutes = divmod(rem, 60)
-
-    parts = []
-    if months:
-        parts.append(f"{months} month{'s' if months != 1 else ''}")
-    if weeks:
-        parts.append(f"{weeks} week{'s' if weeks != 1 else ''}")
-    if days:
-        parts.append(f"{days} day{'s' if days != 1 else ''}")
-    if hours:
-        parts.append(f"{hours} hour{'s' if hours != 1 else ''}")
-    if minutes:
-        parts.append(f"{minutes} minute{'s' if minutes != 1 else ''}")
-
-    return " ".join(parts) if parts else "0 minutes"
-
-
 class PricingPackageSerializer(serializers.ModelSerializer):
     package_name = serializers.CharField(source="package_type.name")
     category = serializers.CharField(source="package_type.category.name")
@@ -138,11 +111,11 @@ class PricingPackageSerializer(serializers.ModelSerializer):
     def get_total_km_limit(self, obj):
         if not obj.km_limit:
             return "No Distance Limit"
-        return f"({int(obj.km_limit * self._multiplier(obj))} km included)"
+        return f"{int(obj.km_limit * self._multiplier(obj))} km included"
 
     def get_total_duration(self, obj):
         hours = getattr(obj, "searched_duration_hours", None)
-        return _format_duration(hours) if hours is not None else None
+        return format_duration(hours) if hours is not None else None
 
 
 # ── Per-location listing card ─────────────────────────────────────────
@@ -262,11 +235,24 @@ class VehicleDetailImageSerializer(serializers.ModelSerializer):
         return obj.image.url
 
 
+# class VehicleDetailPackageSerializer(serializers.Serializer):
+#     id = serializers.IntegerField()
+#     name = serializers.CharField()
+#     price_per_day = serializers.DecimalField(max_digits=10, decimal_places=2)
+#     label = serializers.CharField()
+
+
 class VehicleDetailPackageSerializer(serializers.Serializer):
     id = serializers.IntegerField()
     name = serializers.CharField()
+    category = serializers.CharField()
+    duration_hours = serializers.DecimalField(max_digits=5, decimal_places=2)
     price_per_day = serializers.DecimalField(max_digits=10, decimal_places=2)
+    total_price = serializers.DecimalField(max_digits=10, decimal_places=2)
+    km_limit = serializers.IntegerField(allow_null=True)
+    total_km_limit = serializers.CharField()
     label = serializers.CharField()
+    is_default = serializers.BooleanField()
 
 
 class FareDetailsSerializer(serializers.Serializer):
@@ -295,7 +281,8 @@ class VehiclePoliciesSerializer(serializers.Serializer):
 
 
 class VehicleDetailSerializer(serializers.Serializer):
-    id = serializers.IntegerField()  # listing_id
+    id = serializers.IntegerField()
+    vehicle_type_id = serializers.IntegerField()
     name = serializers.CharField()
     make_year = serializers.IntegerField()
     transmission_type = serializers.CharField()
@@ -311,11 +298,15 @@ class VehicleDetailSerializer(serializers.Serializer):
     primary_image = serializers.CharField(allow_null=True)
     available_count = serializers.IntegerField()
     packages = VehicleDetailPackageSerializer(many=True)
+    selected_package_id = serializers.IntegerField(allow_null=True)
+    searched_duration = serializers.CharField(allow_null=True)
     fare_details = FareDetailsSerializer()
     pickup_location = VehiclePickupLocationSerializer()
     policies = VehiclePoliciesSerializer()
     terms_and_conditions = serializers.ListField(child=serializers.CharField())
     pay_at_pickup_enabled = serializers.BooleanField()
+    is_available = serializers.BooleanField()
+    availability_message = serializers.CharField(allow_null=True)
 
 
 class VehicleReviewItemSerializer(serializers.Serializer):

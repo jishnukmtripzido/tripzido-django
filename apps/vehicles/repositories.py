@@ -15,15 +15,19 @@ from django.db.models import Avg, Count
 class VehicleSearchRepository:
 
     @staticmethod
-    def get_candidate_listing_ids(city_id: int) -> list[int]:
-        """Returns IDs of all approved listings in the given city."""
-        return list(
-            VehicleListing.objects.filter(
-                status=VehicleListing.Status.APPROVED,
-                pickup_location__city_id=city_id,
-                vendor__status=Vendor.Status.APPROVED,
-            ).values_list("id", flat=True)
+    def get_candidate_listing_ids(
+        city_id: int, vehicle_type_id: int | None = None
+    ) -> list[int]:
+        """Returns IDs of all approved listings in the given city,
+        optionally narrowed to a single vehicle type."""
+        qs = VehicleListing.objects.filter(
+            status=VehicleListing.Status.APPROVED,
+            pickup_location__city_id=city_id,
+            vendor__status=Vendor.Status.APPROVED,
         )
+        if vehicle_type_id is not None:
+            qs = qs.filter(vehicle_type_id=vehicle_type_id)
+        return list(qs.values_list("id", flat=True))
 
     @staticmethod
     def get_listings_by_ids(listing_ids: list[int]):

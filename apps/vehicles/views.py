@@ -8,11 +8,13 @@ from apps.vehicles.serializers import (
     VehicleSearchQuerySerializer,
     VehicleSearchResultSerializer,
     VehicleReviewItemSerializer,
+    VehicleDetailSerializer,
 )
 from apps.vehicles.services import (
     VehicleSearchService,
     VehicleReviewService,
     VehicleReviewService,
+    VehicleDetailService,
 )
 from apps.core.responses import success_response, error_response
 from drf_spectacular.utils import extend_schema, OpenApiParameter
@@ -54,6 +56,13 @@ class VehicleSearchView(GenericAPIView):
                 description="ID of the city to search vehicles in",
             ),
             OpenApiParameter(
+                name="vehicle_type_id",
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Restrict results to a single vehicle type (used when resolving a location change from the detail page)",
+            ),
+            OpenApiParameter(
                 name="pickup_datetime",
                 type=OpenApiTypes.DATETIME,
                 location=OpenApiParameter.QUERY,
@@ -84,8 +93,8 @@ class VehicleSearchView(GenericAPIView):
                 city_id=query_serializer.validated_data["city_id"],
                 pickup_datetime=query_serializer.validated_data["pickup_datetime"],
                 dropoff_datetime=query_serializer.validated_data["dropoff_datetime"],
+                vehicle_type_id=query_serializer.validated_data.get("vehicle_type_id"),
             )
-
             serializer = self.get_serializer(vehicle_types, many=True)
             return success_response(
                 data=serializer.data,
@@ -107,17 +116,57 @@ class VehicleSearchView(GenericAPIView):
             )
 
 
-from apps.vehicles.services import VehicleSearchService, VehicleDetailService
-from apps.vehicles.serializers import (
-    VehicleSearchQuerySerializer,
-    VehicleSearchResultSerializer,
-    VehicleDetailSerializer,
-)
-
-
 class VehicleDetailView(GenericAPIView):
     permission_classes = [AllowAny]
+    serializer_class = VehicleDetailSerializer
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name="location_id",
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Location ID",
+            ),
+            OpenApiParameter(
+                name="location_name",
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Location name",
+            ),
+            OpenApiParameter(
+                name="city_id",
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="City ID",
+            ),
+            OpenApiParameter(
+                name="package_id",
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Package ID",
+            ),
+            OpenApiParameter(
+                name="pickup_datetime",
+                type=OpenApiTypes.DATETIME,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Pickup datetime (ISO 8601), e.g. 2026-06-17T10:00:00",
+            ),
+            OpenApiParameter(
+                name="dropoff_datetime",
+                type=OpenApiTypes.DATETIME,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Dropoff datetime (ISO 8601), e.g. 2026-06-18T10:00:00",
+            ),
+        ],
+        responses=VehicleDetailSerializer,
+    )
     def get(self, request, listing_id: int):
 
         if not listing_id:

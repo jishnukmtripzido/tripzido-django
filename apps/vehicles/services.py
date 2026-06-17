@@ -2,7 +2,12 @@
 
 from datetime import datetime, timedelta
 from decimal import Decimal, ROUND_CEILING
-from apps.vehicles.repositories import VehicleSearchRepository, AvailabilityRepository
+from apps.vehicles.repositories import (
+    VehicleSearchRepository,
+    AvailabilityRepository,
+    VehicleDetailRepository,
+)
+from apps.vehicles.utils import format_duration
 
 
 class AvailabilityService:
@@ -88,24 +93,71 @@ class AvailabilityService:
         return [lid for lid in listing_ids if lid not in unavailable]
 
     @staticmethod
+    def compute_duration_hours(pickup_dt: datetime, dropoff_dt: datetime) -> Decimal:
+        """
+        Decimal hour count built from the timedelta's integer components
+        (not float division), so it lines up exactly with
+        package_type.duration_hours for the % == 0 checks below — float
+        division can leave tiny noise (e.g. 335.99999999998 instead of
+        336) that would silently break that check.
+        """
+        diff = dropoff_dt - pickup_dt
+        return (
+            Decimal(diff.days * 24)
+            + Decimal(diff.seconds) / Decimal(3600)
+            + Decimal(diff.microseconds) / Decimal(3_600_000_000)
+        ).quantize(Decimal("0.01"))
+
+    @staticmethod
+    def get_applicable_packages(
+        packages: list,
+        duration_hours: Decimal,
+    ) -> list[tuple]:
+        """
+        Returns every package usable for the given duration, each paired
+        with the multiplier needed to fully cover it:
+
+          1. Any package whose duration_hours divides evenly into the
+             searched duration (multiplier = duration / pkg_duration —
+             an exact match is just the multiplier == 1 case of this).
+          2. If none divide evenly, falls back to the Daily package alone,
+             rounded UP to the nearest whole day so the full duration is
+             covered.
+          3. If there's no Daily package either, returns [].
+
+        Results from (1) are sorted cheapest-total first.
+        """
+        candidates = []
+        for p in packages:
+            pkg_hours = p.package_type.duration_hours
+            if pkg_hours > 0 and duration_hours % pkg_hours == 0:
+                multiplier = duration_hours / pkg_hours
+                candidates.append((p, multiplier))
+
+        if candidates:
+            candidates.sort(key=lambda c: c[0].price * c[1])
+            return candidates
+
+        daily = next(
+            (p for p in packages if p.package_type.category.name.lower() == "daily"),
+            None,
+        )
+        if daily:
+            units = duration_hours / daily.package_type.duration_hours
+            multiplier = units.to_integral_value(rounding=ROUND_CEILING)
+            return [(daily, multiplier)]
+
+        return []
+
+    @staticmethod
     def pick_package_for_listings(
         listing_ids: list[int],
         duration_hours: Decimal,
-    ) -> dict[int, tuple["PricingPackage", Decimal]]:
+    ) -> dict[int, tuple]:
         """
-        For each listing, picks exactly one PricingPackage and the multiplier
-        needed to cover the searched duration:
-
-        1. Exact duration_hours match (any category) -> multiplier 1.
-        2. Else, among packages whose duration_hours divides evenly into the
-            searched duration (e.g. a 3h package against a 6h search, or a
-            168h/weekly package against a 336h search), pick whichever gives
-            the cheapest total price. Multiplier = duration_hours / pkg duration.
-        3. Else fall back to the listing's Daily package, rounded UP to the
-            nearest whole day so the full duration is covered.
-        4. Else listing is excluded (no entry in returned dict).
-
-        Returns {listing_id: (package, multiplier)}.
+        For each listing, picks the single cheapest applicable package —
+        used for search cards, which only have room for one package per
+        listing. See get_applicable_packages for the matching rules.
         """
         packages = AvailabilityRepository.get_packages_for_listings(listing_ids)
 
@@ -115,38 +167,11 @@ class AvailabilityService:
 
         result = {}
         for listing_id, pkgs in by_listing.items():
-            # 1. Exact match
-            exact = next(
-                (p for p in pkgs if p.package_type.duration_hours == duration_hours),
-                None,
+            applicable = AvailabilityService.get_applicable_packages(
+                pkgs, duration_hours
             )
-            if exact:
-                result[listing_id] = (exact, Decimal("1"))
-                continue
-
-            # 2. Multiplication match: searched duration is a whole number of
-            # package units. Cheapest total wins among qualifying packages.
-            candidates = []
-            for p in pkgs:
-                pkg_hours = p.package_type.duration_hours
-                if pkg_hours > 0 and duration_hours % pkg_hours == 0:
-                    multiplier = duration_hours / pkg_hours
-                    candidates.append((p, multiplier, p.price * multiplier))
-
-            if candidates:
-                best_pkg, best_multiplier, _ = min(candidates, key=lambda c: c[2])
-                result[listing_id] = (best_pkg, best_multiplier)
-                continue
-
-            # 3. Daily fallback — round up to fully cover the duration
-            daily = next(
-                (p for p in pkgs if p.package_type.category.name.lower() == "daily"),
-                None,
-            )
-            if daily:
-                units = duration_hours / daily.package_type.duration_hours
-                multiplier = units.to_integral_value(rounding=ROUND_CEILING)
-                result[listing_id] = (daily, multiplier)
+            if applicable:
+                result[listing_id] = applicable[0]
 
         return result
 
@@ -154,8 +179,15 @@ class AvailabilityService:
 class VehicleSearchService:
 
     @staticmethod
-    def search(city_id: int, pickup_datetime: datetime, dropoff_datetime: datetime):
-        candidate_ids = VehicleSearchRepository.get_candidate_listing_ids(city_id)
+    def search(
+        city_id: int,
+        pickup_datetime: datetime,
+        dropoff_datetime: datetime,
+        vehicle_type_id: int | None = None,
+    ):
+        candidate_ids = VehicleSearchRepository.get_candidate_listing_ids(
+            city_id, vehicle_type_id=vehicle_type_id
+        )
 
         available_ids = AvailabilityService.filter_available_listing_ids(
             listing_ids=candidate_ids,
@@ -166,14 +198,9 @@ class VehicleSearchService:
         if not available_ids:
             return []
 
-        diff = dropoff_datetime - pickup_datetime
-        duration_hours = (
-            Decimal(diff.days * 24)
-            + Decimal(diff.seconds) / Decimal(3600)
-            + Decimal(diff.microseconds) / Decimal(3_600_000_000)
-        ).quantize(
-            Decimal("0.01")
-        )  # match package_type.duration_hours precision
+        duration_hours = AvailabilityService.compute_duration_hours(
+            pickup_datetime, dropoff_datetime
+        )
 
         matched = AvailabilityService.pick_package_for_listings(
             available_ids, duration_hours
@@ -198,7 +225,6 @@ class VehicleSearchService:
 
 class VehicleDetailService:
 
-    # ── Fallbacks used only when vendor hasn't set terms yet ──────────
     DEFAULT_TERMS = [
         "One Day will be considered from 9 am to 9 am.",
         "Documents Required: Aadhar Card and Driving License.",
@@ -208,10 +234,6 @@ class VehicleDetailService:
 
     @staticmethod
     def _get_current_terms(listing):
-        """
-        Returns the current VendorTerms for the listing, or None.
-        current_terms_list is set by Prefetch(to_attr=...) in the repo.
-        """
         terms_list = getattr(listing, "current_terms_list", [])
         return terms_list[0] if terms_list else None
 
@@ -248,51 +270,6 @@ class VehicleDetailService:
         }
 
     @staticmethod
-    def _build_fare_details(listing, request=None) -> dict:
-
-        pickup_str = request.query_params.get("pickup_datetime")
-        dropoff_str = request.query_params.get("dropoff_datetime")
-        pickup = datetime.fromisoformat(pickup_str)
-        dropoff = datetime.fromisoformat(dropoff_str)
-        diff = dropoff - pickup
-
-        # Extract days and hours
-        total_seconds = int(diff.total_seconds())
-        days = diff.days
-        hours = (total_seconds % 86400) // 3600  # remaining hours after full days
-        total_hours = int(diff.total_seconds() // 3600)  # total hours overall
-
-        print(days)  # 1
-        print(hours)  # 0
-        print(total_hours)  # 24
-
-        daily_price = None
-        package_duration = 24
-        for pkg in listing.pricing_packages.all():
-            if pkg.package_type.category.name.lower() == "daily":
-                daily_price = float(pkg.price)
-                package_duration = float(pkg.package_type.duration_hours)
-                break
-
-        if daily_price is None:
-            first = listing.pricing_packages.first()
-            daily_price = float(first.price) if first else 0.0
-            package_duration = float(first.package_type.duration_hours)
-
-        rent_amount = daily_price * package_duration
-        advance_pct = 0.20
-        advance_payment = round(rent_amount * advance_pct, 2)
-        remaining_rent = round(rent_amount - advance_payment, 2)
-
-        return {
-            "rent_amount": rent_amount,
-            "total": rent_amount,
-            "remaining_rent": remaining_rent,
-            "advance_payment": advance_payment,
-            "refundable_deposit": float(listing.security_deposit_amount),
-        }
-
-    @staticmethod
     def _build_operating_hours(listing) -> str:
         if listing.operating_hours_start and listing.operating_hours_end:
 
@@ -305,13 +282,54 @@ class VehicleDetailService:
         return "9:00 AM - 5:00 PM"
 
     @staticmethod
-    def _get_multiplication_factor_from_duration():
-        return None
+    def _build_packages(applicable: list[tuple], selected_pkg) -> list[dict]:
+        """
+        applicable: list of (PricingPackage, multiplier) from
+        AvailabilityService.get_applicable_packages.
+        """
+        selected_id = selected_pkg.pk if selected_pkg else None
+        result = []
+        for pkg, multiplier in applicable:
+            total_price = pkg.price * multiplier
+            km_limit = pkg.km_limit
+            total_km_limit_value = int(km_limit * multiplier) if km_limit else None
+            result.append(
+                {
+                    "id": pkg.pk,
+                    "name": pkg.package_type.name,
+                    "category": pkg.package_type.category.name,
+                    "duration_hours": pkg.package_type.duration_hours,
+                    "price_per_day": pkg.price,  # base package price (name kept for FE compat)
+                    "total_price": total_price,
+                    "km_limit": km_limit,  # raw, per-unit cap — same meaning as search's raw field
+                    "total_km_limit": (
+                        "No Distance Limit"
+                        if not km_limit
+                        else f"{total_km_limit_value} km included"
+                    ),
+                    "label": f"{pkg.package_type.name} (₹ {int(total_price)} total)",
+                    "is_default": pkg.pk == selected_id,
+                }
+            )
+        return result
+
+    @staticmethod
+    def _build_fare_details(rent_amount: Decimal, refundable_deposit) -> dict:
+        """
+        Commission is 0% for now, so the full rent is collected at pickup
+        and nothing is taken as an advance.
+        """
+        rent_amount = float(rent_amount)
+        return {
+            "rent_amount": rent_amount,
+            "total": rent_amount,
+            "remaining_rent": rent_amount,
+            "advance_payment": 0.0,
+            "refundable_deposit": float(refundable_deposit),
+        }
 
     @staticmethod
     def get_vehicle_detail(listing_id: int, request=None) -> dict | None:
-        from apps.vehicles.repositories import VehicleDetailRepository
-
         listing = VehicleDetailRepository.get_listing_by_id(listing_id)
         if listing is None:
             return None
@@ -321,7 +339,6 @@ class VehicleDetailService:
         terms = VehicleDetailService._get_current_terms(listing)
         operating_hours = VehicleDetailService._build_operating_hours(listing)
 
-        # ── Images ────────────────────────────────────────────────────
         def absolute_url(image_field):
             if not image_field:
                 return None
@@ -332,23 +349,65 @@ class VehicleDetailService:
         image_urls = [absolute_url(img.image) for img in images]
         primary_image = absolute_url(vt.primary_image) if vt.primary_image else None
 
-        # ── Packages ──────────────────────────────────────────────────
-        packages = [
-            {
-                "id": pkg.pk,
-                "name": pkg.package_type.name,
-                "price_per_day": pkg.price,
-                "label": f"{pkg.package_type.name} (₹ {int(pkg.price)} per Day)",
-            }
-            for pkg in listing.pricing_packages.all()
-        ]
+        # ── Duration-aware package matching ──────────────────────────
+        all_packages = list(listing.pricing_packages.all())
 
-        pay_at_pickup_enabled = any(
-            pkg.pay_at_pickup_enabled for pkg in listing.pricing_packages.all()
+        package_id_param = pickup_str = dropoff_str = None
+        if request is not None:
+            package_id_param = request.query_params.get("package_id")
+            pickup_str = request.query_params.get("pickup_datetime")
+            dropoff_str = request.query_params.get("dropoff_datetime")
+
+        searched_duration = None
+        is_available = True
+        availability_message = None
+
+        if pickup_str and dropoff_str:
+            pickup_dt = datetime.fromisoformat(pickup_str)
+            dropoff_dt = datetime.fromisoformat(dropoff_str)
+
+            is_available, availability_message = AvailabilityService.is_available(
+                listing.pk, pickup_dt, dropoff_dt
+            )
+
+            duration_hours = AvailabilityService.compute_duration_hours(
+                pickup_dt, dropoff_dt
+            )
+            applicable = AvailabilityService.get_applicable_packages(
+                all_packages, duration_hours
+            )
+            searched_duration = format_duration(duration_hours)
+        else:
+            applicable = [(p, Decimal("1")) for p in all_packages]
+
+        selected = None
+        if package_id_param:
+            try:
+                package_id_int = int(package_id_param)
+            except (TypeError, ValueError):
+                package_id_int = None
+            if package_id_int is not None:
+                selected = next(
+                    (pair for pair in applicable if pair[0].pk == package_id_int),
+                    None,
+                )
+        if selected is None:
+            selected = applicable[0] if applicable else None
+
+        packages = VehicleDetailService._build_packages(
+            applicable, selected[0] if selected else None
         )
+
+        rent_amount = selected[0].price * selected[1] if selected else Decimal("0")
+        fare_details = VehicleDetailService._build_fare_details(
+            rent_amount, listing.security_deposit_amount
+        )
+
+        pay_at_pickup_enabled = any(pkg.pay_at_pickup_enabled for pkg in all_packages)
 
         return {
             "id": listing.pk,
+            "vehicle_type_id": vt.pk,
             "name": vt.name,
             "make_year": vt.make_year,
             "transmission_type": vt.transmission_type,
@@ -366,7 +425,9 @@ class VehicleDetailService:
             "primary_image": primary_image,
             "available_count": listing.available_count,
             "packages": packages,
-            "fare_details": VehicleDetailService._build_fare_details(listing, request),
+            "selected_package_id": selected[0].pk if selected else None,
+            "searched_duration": searched_duration,
+            "fare_details": fare_details,
             "pickup_location": {
                 "id": location.pk,
                 "location_name": location.name,
@@ -382,6 +443,8 @@ class VehicleDetailService:
                 terms
             ),
             "pay_at_pickup_enabled": pay_at_pickup_enabled,
+            "is_available": is_available,
+            "availability_message": None if is_available else availability_message,
         }
 
 
