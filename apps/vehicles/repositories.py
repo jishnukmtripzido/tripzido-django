@@ -8,7 +8,7 @@ from apps.vehicles.models import (
     ListingOperatingSchedule,
     VehicleReview,
 )
-from apps.vendors.models import Vendor, VendorTerms
+from apps.vendors.models import Vendor, VendorTerms, VendorSubscription
 from django.db.models import Avg, Count
 
 
@@ -97,21 +97,51 @@ class AvailabilityRepository:
             ).values_list("listing_id", flat=True)
         )
 
+    # @staticmethod
+    # def get_scheduled_listing_ids(
+    #     listing_ids: list[int],
+    #     days_of_week: set[int],
+    # ) -> set[int]:
+    #     """
+    #     Returns listing IDs that have ANY schedule entry for the given days.
+    #     Used to find listings with missing schedule entries (= implicitly closed).
+    #     """
+    #     return set(
+    #         ListingOperatingSchedule.objects.filter(
+    #             listing_id__in=listing_ids,
+    #             day_of_week__in=days_of_week,
+    #         ).values_list("listing_id", flat=True)
+    #     )
+
     @staticmethod
-    def get_scheduled_listing_ids(
+    def get_listings_missing_schedule_days(
         listing_ids: list[int],
         days_of_week: set[int],
     ) -> set[int]:
         """
-        Returns listing IDs that have ANY schedule entry for the given days.
-        Used to find listings with missing schedule entries (= implicitly closed).
+        Returns listing IDs missing a schedule entry for at least one of
+        the given days — i.e. implicitly closed on that day.
+
+        Replaces the old get_scheduled_listing_ids, which incorrectly
+        treated "has an entry for ANY one of the required days" as fully
+        scheduled — so a listing with only a Thursday entry would pass
+        even on a Thursday→Friday search, despite having no Friday entry
+        at all.
         """
-        return set(
-            ListingOperatingSchedule.objects.filter(
-                listing_id__in=listing_ids,
-                day_of_week__in=days_of_week,
-            ).values_list("listing_id", flat=True)
-        )
+        rows = ListingOperatingSchedule.objects.filter(
+            listing_id__in=listing_ids,
+            day_of_week__in=days_of_week,
+        ).values_list("listing_id", "day_of_week")
+
+        days_by_listing: dict[int, set[int]] = {}
+        for listing_id, day in rows:
+            days_by_listing.setdefault(listing_id, set()).add(day)
+
+        return {
+            listing_id
+            for listing_id in listing_ids
+            if not days_of_week.issubset(days_by_listing.get(listing_id, set()))
+        }
 
     @staticmethod
     def get_listing_schedule(listing_id: int) -> dict:
@@ -177,7 +207,15 @@ class VehicleDetailRepository:
                 Prefetch(
                     "vendor_terms",
                     queryset=VendorTerms.objects.filter(is_current=True),
-                    to_attr="current_terms_list",  # gives us a plain list
+                    to_attr="current_terms_list",
+                ),
+                Prefetch(
+                    "vendor__subscriptions",
+                    queryset=VendorSubscription.objects.filter(
+                        is_current=True,
+                        status=VendorSubscription.Status.ACTIVE,
+                    ).select_related("plan__commission"),
+                    to_attr="current_subscription_list",
                 ),
             )
             .first()

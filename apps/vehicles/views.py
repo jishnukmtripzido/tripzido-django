@@ -9,6 +9,8 @@ from apps.vehicles.serializers import (
     VehicleSearchResultSerializer,
     VehicleReviewItemSerializer,
     VehicleDetailSerializer,
+    CheckoutSummaryQuerySerializer,
+    CheckoutSummarySerializer,
 )
 from apps.vehicles.services import (
     VehicleSearchService,
@@ -220,3 +222,67 @@ class VehicleReviewsView(GenericAPIView):
                 errors=str(e),
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
+
+class CheckoutSummaryView(GenericAPIView):
+    permission_classes = [AllowAny]
+    serializer_class = CheckoutSummarySerializer
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name="listing_id",
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                required=True,
+            ),
+            OpenApiParameter(
+                name="package_id",
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                required=True,
+            ),
+            OpenApiParameter(
+                name="pickup_datetime",
+                type=OpenApiTypes.DATETIME,
+                location=OpenApiParameter.QUERY,
+                required=True,
+            ),
+            OpenApiParameter(
+                name="dropoff_datetime",
+                type=OpenApiTypes.DATETIME,
+                location=OpenApiParameter.QUERY,
+                required=True,
+            ),
+        ],
+        responses=CheckoutSummarySerializer,
+    )
+    def get(self, request):
+        query_serializer = CheckoutSummaryQuerySerializer(data=request.query_params)
+        if not query_serializer.is_valid():
+            return error_response(
+                message="Invalid checkout parameters",
+                errors=query_serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        data, error = VehicleDetailService.get_checkout_summary(
+            listing_id=query_serializer.validated_data["listing_id"],
+            package_id=query_serializer.validated_data["package_id"],
+            pickup_dt=query_serializer.validated_data["pickup_datetime"],
+            dropoff_dt=query_serializer.validated_data["dropoff_datetime"],
+            request=request,
+        )
+
+        if data is None:
+            return error_response(
+                message=error or "Unable to build checkout summary",
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = CheckoutSummarySerializer(data)
+        return success_response(
+            data=serializer.data,
+            message="Checkout summary retrieved successfully",
+            status=status.HTTP_200_OK,
+        )

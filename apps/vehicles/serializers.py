@@ -235,13 +235,6 @@ class VehicleDetailImageSerializer(serializers.ModelSerializer):
         return obj.image.url
 
 
-# class VehicleDetailPackageSerializer(serializers.Serializer):
-#     id = serializers.IntegerField()
-#     name = serializers.CharField()
-#     price_per_day = serializers.DecimalField(max_digits=10, decimal_places=2)
-#     label = serializers.CharField()
-
-
 class VehicleDetailPackageSerializer(serializers.Serializer):
     id = serializers.IntegerField()
     name = serializers.CharField()
@@ -253,6 +246,7 @@ class VehicleDetailPackageSerializer(serializers.Serializer):
     total_km_limit = serializers.CharField()
     label = serializers.CharField()
     is_default = serializers.BooleanField()
+    partial_payment_percentage = serializers.FloatField(allow_null=True)
 
 
 class FareDetailsSerializer(serializers.Serializer):
@@ -335,3 +329,42 @@ class VehicleReviewItemSerializer(serializers.Serializer):
 
     def get_vehicle_name(self, review):
         return review.listing.vehicle_type.name
+
+
+class CheckoutSummaryQuerySerializer(serializers.Serializer):
+    listing_id = serializers.IntegerField(min_value=1)
+    package_id = serializers.IntegerField(min_value=1)
+    pickup_datetime = serializers.DateTimeField()
+    dropoff_datetime = serializers.DateTimeField()
+
+    def validate(self, attrs):
+        if attrs["dropoff_datetime"] <= attrs["pickup_datetime"]:
+            raise serializers.ValidationError(
+                {"dropoff_datetime": "Dropoff must be after pickup."}
+            )
+        return attrs
+
+
+class ThingsToRememberSerializer(serializers.Serializer):
+    km_limit = serializers.CharField()
+    excess_charge = serializers.CharField()
+    location_timings = serializers.CharField()
+    late_penalty_per_hour = serializers.FloatField()
+
+
+class CheckoutSummarySerializer(serializers.Serializer):
+    listing_id = serializers.IntegerField()
+    package_id = serializers.IntegerField()
+    package_name = serializers.CharField()
+    vehicle_name = serializers.CharField()
+    primary_image = serializers.CharField(allow_null=True)
+    available_count = serializers.IntegerField()
+    unit_rent_amount = serializers.FloatField()
+    unit_refundable_deposit = serializers.FloatField()
+    can_pay_partial = serializers.BooleanField()
+    partial_payment_percentage = serializers.FloatField(allow_null=True)
+    pickup_datetime = serializers.CharField()
+    dropoff_datetime = serializers.CharField()
+    duration_label = serializers.CharField()
+    pickup_location_name = serializers.CharField()
+    things_to_remember = ThingsToRememberSerializer()

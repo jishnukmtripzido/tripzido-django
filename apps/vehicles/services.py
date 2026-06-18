@@ -53,41 +53,71 @@ class AvailabilityService:
 
         return True, ""
 
+    # @staticmethod
+    # def filter_available_listing_ids(
+    #     listing_ids: list[int],
+    #     pickup_dt: datetime,
+    #     dropoff_dt: datetime,
+    # ) -> list[int]:
+    #     """
+    #     Bulk availability filter for search results.
+    #     Runs 3 DB queries regardless of listing count.
+    #     """
+    #     if not listing_ids:
+    #         return []
+
+    #     # 1. One-off blocks
+    #     blocked_ids = AvailabilityRepository.get_blocked_listing_ids(
+    #         listing_ids, pickup_dt, dropoff_dt
+    #     )
+
+    #     # 2. Build set of weekdays touched by this booking range
+    #     required_days = set()
+    #     current = pickup_dt
+    #     while current.date() <= dropoff_dt.date():
+    #         required_days.add(current.weekday())
+    #         current += timedelta(days=1)
+
+    #     # 3. Explicitly closed on a required day
+    #     schedule_blocked_ids = AvailabilityRepository.get_schedule_blocked_listing_ids(
+    #         listing_ids, required_days
+    #     )
+
+    #     # 4. No schedule entry at all for a required day = implicitly closed
+    #     has_schedule_ids = AvailabilityRepository.get_scheduled_listing_ids(
+    #         listing_ids, required_days
+    #     )
+    #     no_schedule_ids = set(listing_ids) - has_schedule_ids
+
+    #     unavailable = blocked_ids | schedule_blocked_ids | no_schedule_ids
+    #     return [lid for lid in listing_ids if lid not in unavailable]
+
     @staticmethod
     def filter_available_listing_ids(
         listing_ids: list[int],
         pickup_dt: datetime,
         dropoff_dt: datetime,
     ) -> list[int]:
-        """
-        Bulk availability filter for search results.
-        Runs 3 DB queries regardless of listing count.
-        """
         if not listing_ids:
             return []
 
-        # 1. One-off blocks
         blocked_ids = AvailabilityRepository.get_blocked_listing_ids(
             listing_ids, pickup_dt, dropoff_dt
         )
 
-        # 2. Build set of weekdays touched by this booking range
         required_days = set()
         current = pickup_dt
         while current.date() <= dropoff_dt.date():
             required_days.add(current.weekday())
             current += timedelta(days=1)
 
-        # 3. Explicitly closed on a required day
         schedule_blocked_ids = AvailabilityRepository.get_schedule_blocked_listing_ids(
             listing_ids, required_days
         )
 
-        # 4. No schedule entry at all for a required day = implicitly closed
-        has_schedule_ids = AvailabilityRepository.get_scheduled_listing_ids(
+        no_schedule_ids = AvailabilityRepository.get_listings_missing_schedule_days(
             listing_ids, required_days
         )
-        no_schedule_ids = set(listing_ids) - has_schedule_ids
 
         unavailable = blocked_ids | schedule_blocked_ids | no_schedule_ids
         return [lid for lid in listing_ids if lid not in unavailable]
@@ -282,13 +312,44 @@ class VehicleDetailService:
         return "9:00 AM - 5:00 PM"
 
     @staticmethod
-    def _build_packages(applicable: list[tuple], selected_pkg) -> list[dict]:
+    def _get_vendor_commission_info(vendor) -> tuple[float | None, bool]:
+        """
+        Returns (flat_percentage, can_enable_partial_payment) sourced from
+        the vendor's current active subscription plan's commission.
+        (None, False) if the vendor has no current active subscription, or
+        the commission has no flat_percentage configured.
+        """
+        subscriptions = getattr(vendor, "current_subscription_list", [])
+        subscription = subscriptions[0] if subscriptions else None
+        if subscription is None:
+            return None, False
+
+        plan = subscription.plan
+        commission = plan.commission
+        percentage = (
+            float(commission.flat_percentage)
+            if commission.flat_percentage is not None
+            else None
+        )
+        return percentage, plan.can_enable_partial_payment
+
+    @staticmethod
+    def _build_packages(
+        applicable: list[tuple],
+        selected_pkg,
+        partial_payment_percentage: float | None,
+    ) -> list[dict]:
         """
         applicable: list of (PricingPackage, multiplier) from
         AvailabilityService.get_applicable_packages.
+
+        partial_payment_percentage is sourced from the vendor's subscription
+        commission (see _get_vendor_commission_info), not from the package
+        itself — it's the same value across every package in this list.
         """
         selected_id = selected_pkg.pk if selected_pkg else None
         result = []
+
         for pkg, multiplier in applicable:
             total_price = pkg.price * multiplier
             km_limit = pkg.km_limit
@@ -299,9 +360,9 @@ class VehicleDetailService:
                     "name": pkg.package_type.name,
                     "category": pkg.package_type.category.name,
                     "duration_hours": pkg.package_type.duration_hours,
-                    "price_per_day": pkg.price,  # base package price (name kept for FE compat)
+                    "price_per_day": pkg.price,
                     "total_price": total_price,
-                    "km_limit": km_limit,  # raw, per-unit cap — same meaning as search's raw field
+                    "km_limit": km_limit,
                     "total_km_limit": (
                         "No Distance Limit"
                         if not km_limit
@@ -309,6 +370,7 @@ class VehicleDetailService:
                     ),
                     "label": f"{pkg.package_type.name} (₹ {int(total_price)} total)",
                     "is_default": pkg.pk == selected_id,
+                    "partial_payment_percentage": partial_payment_percentage,
                 }
             )
         return result
@@ -329,6 +391,13 @@ class VehicleDetailService:
         }
 
     @staticmethod
+    def _absolute_url(request, image_field):
+        if not image_field:
+            return None
+        url = image_field.url
+        return request.build_absolute_uri(url) if request else url
+
+    @staticmethod
     def get_vehicle_detail(listing_id: int, request=None) -> dict | None:
         listing = VehicleDetailRepository.get_listing_by_id(listing_id)
         if listing is None:
@@ -346,8 +415,10 @@ class VehicleDetailService:
             return request.build_absolute_uri(url) if request else url
 
         images = listing.images.all()
-        image_urls = [absolute_url(img.image) for img in images]
-        primary_image = absolute_url(vt.primary_image) if vt.primary_image else None
+        image_urls = [
+            VehicleDetailService._absolute_url(request, img.image) for img in images
+        ]
+        primary_image = VehicleDetailService._absolute_url(request, vt.primary_image)
 
         # ── Duration-aware package matching ──────────────────────────
         all_packages = list(listing.pricing_packages.all())
@@ -394,8 +465,15 @@ class VehicleDetailService:
         if selected is None:
             selected = applicable[0] if applicable else None
 
+        commission_percentage, partial_payment_allowed = (
+            VehicleDetailService._get_vendor_commission_info(listing.vendor)
+        )
+        effective_partial_percentage = (
+            commission_percentage if partial_payment_allowed else None
+        )
+
         packages = VehicleDetailService._build_packages(
-            applicable, selected[0] if selected else None
+            applicable, selected[0] if selected else None, effective_partial_percentage
         )
 
         rent_amount = selected[0].price * selected[1] if selected else Decimal("0")
@@ -446,6 +524,97 @@ class VehicleDetailService:
             "is_available": is_available,
             "availability_message": None if is_available else availability_message,
         }
+
+    @staticmethod
+    def get_checkout_summary(
+        listing_id: int,
+        package_id: int,
+        pickup_dt: datetime,
+        dropoff_dt: datetime,
+        request=None,
+    ) -> tuple[dict | None, str | None]:
+        """
+        Returns (summary, None) on success, or (None, error_message) if the
+        listing/package can't be booked for these dates.
+
+        Pricing here is PER VEHICLE (quantity = 1). The frontend multiplies
+        by however many vehicles the customer selects, since rent and
+        deposit scale linearly with quantity and km_limit doesn't scale
+        with quantity at all — it's a per-vehicle allowance already baked
+        into total_km_limit.
+        """
+        listing = VehicleDetailRepository.get_listing_by_id(listing_id)
+        if listing is None:
+            return None, "Vehicle listing not found"
+
+        is_available, message = AvailabilityService.is_available(
+            listing_id, pickup_dt, dropoff_dt
+        )
+        if not is_available:
+            return None, message
+
+        all_packages = list(listing.pricing_packages.all())
+        duration_hours = AvailabilityService.compute_duration_hours(
+            pickup_dt, dropoff_dt
+        )
+        applicable = AvailabilityService.get_applicable_packages(
+            all_packages, duration_hours
+        )
+
+        match = next((pair for pair in applicable if pair[0].pk == package_id), None)
+        if match is None:
+            return None, "Selected package is not valid for this booking duration"
+
+        pkg, multiplier = match
+        unit_rent_amount = pkg.price * multiplier
+
+        commission_percentage, partial_allowed = (
+            VehicleDetailService._get_vendor_commission_info(listing.vendor)
+        )
+        can_pay_partial = bool(
+            pkg.pay_at_pickup_enabled
+            and partial_allowed
+            and commission_percentage is not None
+        )
+        partial_payment_percentage = commission_percentage if can_pay_partial else None
+
+        vt = listing.vehicle_type
+        location = listing.pickup_location
+        terms = VehicleDetailService._get_current_terms(listing)
+        operating_hours = VehicleDetailService._build_operating_hours(listing)
+        policies = VehicleDetailService._build_policies(listing, terms, operating_hours)
+
+        km_limit = pkg.km_limit
+        total_km_limit = (
+            "No Distance Limit"
+            if not km_limit
+            else f"{int(km_limit * multiplier)} km included"
+        )
+
+        return {
+            "listing_id": listing.pk,
+            "package_id": pkg.pk,
+            "package_name": pkg.package_type.name,
+            "vehicle_name": vt.name,
+            "primary_image": VehicleDetailService._absolute_url(
+                request, vt.primary_image
+            ),
+            "available_count": listing.available_count,
+            "unit_rent_amount": float(unit_rent_amount),
+            "unit_refundable_deposit": float(listing.security_deposit_amount),
+            "can_pay_partial": can_pay_partial,
+            "partial_payment_percentage": partial_payment_percentage,
+            "pickup_datetime": pickup_dt.isoformat(),
+            "dropoff_datetime": dropoff_dt.isoformat(),
+            "duration_label": format_duration(duration_hours),
+            "pickup_location_name": location.name,
+            "things_to_remember": {
+                "km_limit": total_km_limit,
+                "excess_charge": policies["excess_charge"],
+                "location_timings": policies["location_timings"],
+                "late_penalty_per_hour": policies["late_penalty_per_hour"],
+            },
+        }, None
 
 
 class VehicleReviewService:
