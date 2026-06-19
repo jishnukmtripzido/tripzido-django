@@ -35,7 +35,6 @@ class VehicleType(BaseModel):
         BUS = "BUS", "Bus"
         VAN = "VAN", "Van"
 
-    # Core specs (US-C07, US-A01)
     name = models.CharField(max_length=200)
     brand = models.CharField(max_length=100, db_index=True)
     make_year = models.PositiveIntegerField()
@@ -47,7 +46,7 @@ class VehicleType(BaseModel):
         default=VehicleTypeChoices.SCOOTER,
         db_index=True,
         choices=VehicleTypeChoices.choices,
-    )  # "Sedan", "SUV"
+    )
     primary_image = models.ImageField(
         upload_to="vehicle_type/images/", null=True, blank=True
     )
@@ -73,6 +72,66 @@ class VehicleType(BaseModel):
 
     def __str__(self):
         return f"{self.brand} {self.name} ({self.make_year})"
+
+
+class OperatingScheduleTemplate(BaseModel):
+    """
+    Reusable weekly schedule owned by a vendor (e.g. "Standard Hours",
+    "Weekend Hours"). A vendor creates these once and assigns them to
+    as many listings as they like via VehicleListing.schedule_template,
+    instead of repeating the same 7-day schedule on every listing
+    individually.
+    """
+
+    vendor = models.ForeignKey(
+        Vendor, on_delete=models.CASCADE, related_name="schedule_templates"
+    )
+    name = models.CharField(max_length=100)  # e.g. "Standard Hours"
+
+    class Meta:
+        unique_together = ("vendor", "name")
+        ordering = ["name"]
+
+    def __str__(self):
+        return f"{self.vendor.business_name} – {self.name}"
+
+
+class TemplateScheduleDay(BaseModel):
+    """
+    One weekday entry within an OperatingScheduleTemplate. Replaces the
+    old per-listing ListingOperatingSchedule — same shape, but keyed to
+    a shared template instead of a single listing.
+
+    If a day has no entry → that day is unavailable, same rule as
+    before. A listing with no template assigned at all is treated as
+    closed every day.
+    """
+
+    class DayOfWeek(models.IntegerChoices):
+        MONDAY = 0, "Monday"
+        TUESDAY = 1, "Tuesday"
+        WEDNESDAY = 2, "Wednesday"
+        THURSDAY = 3, "Thursday"
+        FRIDAY = 4, "Friday"
+        SATURDAY = 5, "Saturday"
+        SUNDAY = 6, "Sunday"
+
+    template = models.ForeignKey(
+        OperatingScheduleTemplate, on_delete=models.CASCADE, related_name="days"
+    )
+    day_of_week = models.IntegerField(choices=DayOfWeek.choices)
+
+    open_time = models.TimeField(default=time(7, 0))
+    close_time = models.TimeField(default=time(19, 0))
+
+    is_closed = models.BooleanField(
+        default=False,
+        help_text="If True, listings using this template are fully unavailable this day regardless of times",
+    )
+
+    class Meta:
+        unique_together = ("template", "day_of_week")
+        ordering = ["day_of_week"]
 
 
 class VehicleListing(BaseModel):
@@ -101,6 +160,17 @@ class VehicleListing(BaseModel):
         PickupLocation, on_delete=models.PROTECT, related_name="vehicle_listings"
     )
 
+    # Reusable weekly schedule. NULL = no schedule assigned yet, which
+    # is treated as closed every day (same fail-safe as a listing
+    # missing a day entry under the old per-listing model).
+    schedule_template = models.ForeignKey(
+        OperatingScheduleTemplate,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="listings",
+    )
+
     available_count = models.PositiveIntegerField(default=1)
 
     status = models.CharField(
@@ -111,7 +181,6 @@ class VehicleListing(BaseModel):
     )
     rejection_reason = models.TextField(blank=True)
 
-    # Admin approval
     approved_by = models.ForeignKey(
         User,
         null=True,
@@ -121,7 +190,6 @@ class VehicleListing(BaseModel):
     )
     approved_at = models.DateTimeField(null=True, blank=True)
 
-    # Suspension
     suspended_by = models.ForeignKey(
         User,
         null=True,
@@ -132,44 +200,29 @@ class VehicleListing(BaseModel):
     suspended_at = models.DateTimeField(null=True, blank=True)
     suspension_reason = models.TextField(blank=True)
 
-    # Vendor-pause
     paused_at = models.DateTimeField(null=True, blank=True)
 
-    # Security deposit (shown in price breakdown – US-C07)
     security_deposit_amount = models.DecimalField(
         max_digits=10, decimal_places=2, default=0
     )
 
-    # Doorstep delivery toggle (US-C10)
     doorstep_delivery_enabled = models.BooleanField(default=False)
 
-    # Pay-at-pickup option
-    # pay_at_pickup_enabled = models.BooleanField(default=False)
-
-    # Km limit and excess charge (shown in US-C07, US-C31)
     km_limit_per_day = models.PositiveIntegerField(null=True, blank=True)
     excess_charge_per_km = models.DecimalField(
         max_digits=8, decimal_places=2, null=True, blank=True
     )
 
-    # Late return penalty
     late_return_penalty_per_hour = models.DecimalField(
         max_digits=8, decimal_places=2, null=True, blank=True
     )
 
-    # Operating hours
+    # Display-only fallback hours shown on the listing card/detail page
+    # when there's no current VendorTerms note — unrelated to the
+    # day-by-day booking schedule above, which is what actually gates
+    # availability.
     operating_hours_start = models.TimeField(null=True, blank=True)
     operating_hours_end = models.TimeField(null=True, blank=True)
-
-    # Partial payment toggle (US-C09)
-    # partial_payment_enabled = models.BooleanField(default=True)
-    # partial_payment_percentage = models.DecimalField(
-    #     max_digits=5,
-    #     decimal_places=2,
-    #     null=True,
-    #     blank=True,
-    #     help_text="% of total to collect upfront when partial payment selected",
-    # )
 
     class Meta:
         unique_together = ("vendor", "vehicle_type", "pickup_location")
@@ -185,7 +238,7 @@ class PackageCategory(BaseModel):
     e.g. Hourly, Daily, Weekly, Monthly etc.
     """
 
-    name = models.CharField(max_length=50, unique=True)  # "Hourly", "Daily"
+    name = models.CharField(max_length=50, unique=True)
     description = models.TextField(blank=True)
     sort_order = models.PositiveSmallIntegerField(default=0)
 
@@ -204,10 +257,10 @@ class PricingPackageType(BaseModel):
 
     category = models.ForeignKey(
         PackageCategory,
-        on_delete=models.PROTECT,  # prevent deleting "Daily" if packages exist
+        on_delete=models.PROTECT,
         related_name="package_types",
     )
-    name = models.CharField(max_length=50, unique=True)  # "3-Hour", "6-Hour"
+    name = models.CharField(max_length=50, unique=True)
     description = models.TextField(blank=True)
     duration_hours = models.DecimalField(
         max_digits=5,
@@ -238,7 +291,6 @@ class PricingPackage(BaseModel):
     duration_hours = models.DecimalField(max_digits=5, decimal_places=2)
     price = models.DecimalField(max_digits=10, decimal_places=2)
     pay_at_pickup_enabled = models.BooleanField(default=False)
-    # partial_payment_enabled = models.BooleanField(default=True)
     partial_payment_percentage = models.DecimalField(
         max_digits=5,
         decimal_places=2,
@@ -247,7 +299,6 @@ class PricingPackage(BaseModel):
         help_text="% of total to collect upfront when partial payment selected",
     )
     km_limit = models.PositiveIntegerField(default=None, null=True, blank=True)
-    # is_active = models.BooleanField(default=True)
 
     class Meta:
         unique_together = ("listing", "package_type")
@@ -256,45 +307,14 @@ class PricingPackage(BaseModel):
         return f"{self.listing} – {self.package_type} @ ₹{self.price}"
 
 
-class ListingOperatingSchedule(BaseModel):
-    """
-    Recurring weekly schedule per listing.
-    Vendor sets this once — it repeats every week automatically.
-    If a day has no entry → that entire day is unavailable.
-    """
-
-    class DayOfWeek(models.IntegerChoices):
-        MONDAY = 0, "Monday"
-        TUESDAY = 1, "Tuesday"
-        WEDNESDAY = 2, "Wednesday"
-        THURSDAY = 3, "Thursday"
-        FRIDAY = 4, "Friday"
-        SATURDAY = 5, "Saturday"
-        SUNDAY = 6, "Sunday"
-
-    listing = models.ForeignKey(
-        VehicleListing, on_delete=models.CASCADE, related_name="operating_schedule"
-    )
-    day_of_week = models.IntegerField(choices=DayOfWeek.choices)
-
-    # null open_time = midnight (00:00), null close_time = midnight (24:00)
-    open_time = models.TimeField(default=time(7, 0))
-    close_time = models.TimeField(default=time(19, 0))
-
-    is_closed = models.BooleanField(
-        default=False,
-        help_text="If True, listing is fully unavailable this day regardless of times",
-    )
-
-    class Meta:
-        unique_together = ("listing", "day_of_week")
-        ordering = ["day_of_week"]
-
-
 class ListingBlockedPeriod(BaseModel):
     """
     Specific date/time blocks — maintenance, holidays, personal use.
     Overrides the recurring schedule for that period.
+
+    `count` is how many units of the fleet this block takes out of
+    service (e.g. 1 scooter sent for repair out of a fleet of 3) — it
+    no longer blocks the entire listing regardless of fleet size.
     """
 
     class BlockReason(models.TextChoices):
@@ -306,9 +326,9 @@ class ListingBlockedPeriod(BaseModel):
     listing = models.ForeignKey(
         VehicleListing, on_delete=models.CASCADE, related_name="blocked_periods"
     )
-    # Use datetime not just date — so vendor can block 7pm Dec 24 to 7am Dec 26
     start_datetime = models.DateTimeField(db_index=True)
     end_datetime = models.DateTimeField()
+    count = models.PositiveIntegerField(default=1, validators=[MinValueValidator(1)])
     reason = models.CharField(
         max_length=20, choices=BlockReason.choices, default=BlockReason.OTHER
     )
@@ -321,6 +341,12 @@ class ListingBlockedPeriod(BaseModel):
     def clean(self):
         if self.end_datetime <= self.start_datetime:
             raise ValidationError("end_datetime must be after start_datetime")
+
+        if self.listing_id and self.count > self.listing.available_count:
+            raise ValidationError(
+                "count cannot exceed the listing's total fleet size "
+                f"({self.listing.available_count})."
+            )
 
         overlapping = ListingBlockedPeriod.objects.filter(
             listing=self.listing,
@@ -400,7 +426,6 @@ class VehicleReview(BaseModel):
         REMOVED = "REMOVED", "Removed by Admin"
         FLAGGED = "FLAGGED", "Flagged for Review"
 
-    # booking is defined in booking.py; we use string reference to avoid circular import
     booking = models.ForeignKey(
         "bookings.Booking", on_delete=models.CASCADE, related_name="reviews"
     )
@@ -421,7 +446,7 @@ class VehicleReview(BaseModel):
         choices=ModerationStatus.choices,
         default=ModerationStatus.PENDING,
     )
-    moderation_note = models.TextField(blank=True)  # admin internal note
+    moderation_note = models.TextField(blank=True)
     moderated_by = models.ForeignKey(
         User,
         null=True,

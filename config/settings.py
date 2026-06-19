@@ -236,3 +236,11 @@ STATIC_URL = "static/"
 
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
+
+
+CASHFREE_APP_ID = env("CASHFREE_APP_ID")
+CASHFREE_SECRET_KEY = env("CASHFREE_SECRET_KEY")
+CASHFREE_ENVIRONMENT = env("CASHFREE_ENVIRONMENT", default="SANDBOX")  # or "PRODUCTION"
+CASHFREE_API_VERSION = "2023-08-01"
+PLATFORM_TC_VERSION = "1.0"  # placeholder until real T&C versioning exists
+FRONTEND_BASE_URL = env("FRONTEND_BASE_URL", default="http://localhost:3000")

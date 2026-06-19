@@ -1,4 +1,5 @@
 from django.contrib import admin
+from django.utils import timezone
 
 from apps.core.admin import SoftDeleteAdmin
 from apps.vehicles.models import (
@@ -9,7 +10,8 @@ from apps.vehicles.models import (
     VehicleImage,
     VehicleListing,
     VehicleType,
-    ListingOperatingSchedule,
+    OperatingScheduleTemplate,
+    TemplateScheduleDay,
     ListingBlockedPeriod,
     VehicleReview,
 )
@@ -38,11 +40,17 @@ class VehicleListingAdmin(SoftDeleteAdmin):
         "vendor",
         "vehicle_type",
         "pickup_location",
+        "schedule_template",
         "status",
         "available_count",
         "is_deleted_display",
     )
-    list_filter = ("status", "pickup_location__city", "doorstep_delivery_enabled")
+    list_filter = (
+        "status",
+        "pickup_location__city",
+        "doorstep_delivery_enabled",
+        "schedule_template",
+    )
     search_fields = (
         "vendor__business_name",
         "vehicle_type__name",
@@ -107,18 +115,31 @@ class VehicleImageAdmin(SoftDeleteAdmin):
     readonly_fields = ("is_deleted_display",)
 
 
-@admin.register(ListingOperatingSchedule)
-class ListingOperatingScheduleAdmin(SoftDeleteAdmin):
-    list_display = ("listing", "day_of_week", "open_time", "close_time", "is_closed")
-    list_filter = ("listing", "is_closed")
-    search_fields = ("listing__vehicle_type__name",)
+class TemplateScheduleDayInline(admin.TabularInline):
+    model = TemplateScheduleDay
+    extra = 1
+
+
+@admin.register(OperatingScheduleTemplate)
+class OperatingScheduleTemplateAdmin(SoftDeleteAdmin):
+    list_display = ("name", "vendor", "is_deleted_display")
+    list_filter = ("vendor",)
+    search_fields = ("name", "vendor__business_name")
     readonly_fields = ("is_deleted_display",)
+    inlines = [TemplateScheduleDayInline]
 
 
 @admin.register(ListingBlockedPeriod)
 class ListingBlockedPeriodAdmin(SoftDeleteAdmin):
-    list_display = ("listing", "start_datetime", "end_datetime", "reason", "note")
-    list_filter = ("listing",)
+    list_display = (
+        "listing",
+        "start_datetime",
+        "end_datetime",
+        "count",
+        "reason",
+        "note",
+    )
+    list_filter = ("listing", "reason")
     search_fields = ("listing__vehicle_type__name",)
     readonly_fields = ("is_deleted_display",)
 

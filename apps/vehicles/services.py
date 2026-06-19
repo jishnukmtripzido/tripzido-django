@@ -19,16 +19,18 @@ class AvailabilityService:
         dropoff_dt: datetime,
     ) -> tuple[bool, str]:
         """
-        Detailed single-listing check.
-        Used at booking time to give specific rejection reasons.
-        """
-        # 1. One-off blocks
-        if AvailabilityRepository.has_blocking_period(
-            listing_id, pickup_dt, dropoff_dt
-        ):
-            return False, "Listing is blocked during this period"
+        Checks whether the listing's recurring weekly schedule is open
+        for the entire pickup→dropoff window — correct days present,
+        not marked closed, pickup/dropoff times within open/close
+        hours.
 
-        # 2. Recurring schedule
+        This is purely a "is the business open" check. It does NOT
+        check fleet capacity — a listing can be open for business but
+        have zero free units due to existing bookings or vendor
+        maintenance blocks. That's answered separately by
+        get_remaining_capacity, which combines overlapping bookings
+        and blocked-period counts against the listing's fleet size.
+        """
         schedule = AvailabilityRepository.get_listing_schedule(listing_id)
 
         current = pickup_dt
@@ -53,45 +55,6 @@ class AvailabilityService:
 
         return True, ""
 
-    # @staticmethod
-    # def filter_available_listing_ids(
-    #     listing_ids: list[int],
-    #     pickup_dt: datetime,
-    #     dropoff_dt: datetime,
-    # ) -> list[int]:
-    #     """
-    #     Bulk availability filter for search results.
-    #     Runs 3 DB queries regardless of listing count.
-    #     """
-    #     if not listing_ids:
-    #         return []
-
-    #     # 1. One-off blocks
-    #     blocked_ids = AvailabilityRepository.get_blocked_listing_ids(
-    #         listing_ids, pickup_dt, dropoff_dt
-    #     )
-
-    #     # 2. Build set of weekdays touched by this booking range
-    #     required_days = set()
-    #     current = pickup_dt
-    #     while current.date() <= dropoff_dt.date():
-    #         required_days.add(current.weekday())
-    #         current += timedelta(days=1)
-
-    #     # 3. Explicitly closed on a required day
-    #     schedule_blocked_ids = AvailabilityRepository.get_schedule_blocked_listing_ids(
-    #         listing_ids, required_days
-    #     )
-
-    #     # 4. No schedule entry at all for a required day = implicitly closed
-    #     has_schedule_ids = AvailabilityRepository.get_scheduled_listing_ids(
-    #         listing_ids, required_days
-    #     )
-    #     no_schedule_ids = set(listing_ids) - has_schedule_ids
-
-    #     unavailable = blocked_ids | schedule_blocked_ids | no_schedule_ids
-    #     return [lid for lid in listing_ids if lid not in unavailable]
-
     @staticmethod
     def filter_available_listing_ids(
         listing_ids: list[int],
@@ -100,10 +63,6 @@ class AvailabilityService:
     ) -> list[int]:
         if not listing_ids:
             return []
-
-        blocked_ids = AvailabilityRepository.get_blocked_listing_ids(
-            listing_ids, pickup_dt, dropoff_dt
-        )
 
         required_days = set()
         current = pickup_dt
@@ -119,8 +78,37 @@ class AvailabilityService:
             listing_ids, required_days
         )
 
-        unavailable = blocked_ids | schedule_blocked_ids | no_schedule_ids
+        # Capacity (fully booked / fully blocked for these dates) is
+        # intentionally NOT filtered here. Sold-out listings should still
+        # appear in search results — just marked unavailable and sorted
+        # last, which VehicleSearchService.search already handles via its
+        # post-processing capacity computation + sort. Only schedule-based
+        # closures (wrong day, no template assigned) actually remove a
+        # listing from results entirely.
+        unavailable = schedule_blocked_ids | no_schedule_ids
         return [lid for lid in listing_ids if lid not in unavailable]
+
+    @staticmethod
+    def get_remaining_capacity(
+        listing_available_count: int,
+        listing_id: int,
+        pickup_dt: datetime,
+        dropoff_dt: datetime,
+    ) -> int:
+        """
+        Total fleet size minus units already committed for this date
+        range — combining active customer bookings AND vendor-created
+        blocked periods (e.g. a scooter sent for maintenance), each
+        counted by however many units they actually occupy.
+        """
+        booked_counts = AvailabilityRepository.get_booked_counts_for_listings(
+            [listing_id], pickup_dt, dropoff_dt
+        )
+        blocked_counts = AvailabilityRepository.get_blocked_counts_for_listings(
+            [listing_id], pickup_dt, dropoff_dt
+        )
+        committed = booked_counts.get(listing_id, 0) + blocked_counts.get(listing_id, 0)
+        return max(0, listing_available_count - committed)
 
     @staticmethod
     def compute_duration_hours(pickup_dt: datetime, dropoff_dt: datetime) -> Decimal:
@@ -239,16 +227,35 @@ class VehicleSearchService:
         final_ids = [lid for lid in available_ids if lid in matched]
 
         active_listings = VehicleSearchRepository.get_listings_by_ids(final_ids)
-        vehicle_types = VehicleSearchRepository.get_vehicle_types_for_listings(
-            active_listings
+        vehicle_types = list(
+            VehicleSearchRepository.get_vehicle_types_for_listings(active_listings)
         )
 
         listings_by_id = {l.id: l for vt in vehicle_types for l in vt.city_listings}
+        booked_counts = AvailabilityRepository.get_booked_counts_for_listings(
+            list(listings_by_id.keys()), pickup_datetime, dropoff_datetime
+        )
+        blocked_counts = AvailabilityRepository.get_blocked_counts_for_listings(
+            list(listings_by_id.keys()), pickup_datetime, dropoff_datetime
+        )
         for listing_id, listing in listings_by_id.items():
             pkg, multiplier = matched[listing_id]
             listing.matched_package = pkg
             pkg.matched_multiplier = multiplier
             pkg.searched_duration_hours = duration_hours
+            committed = booked_counts.get(listing_id, 0) + blocked_counts.get(
+                listing_id, 0
+            )
+            # Overwrite with remaining-for-these-dates so the frontend's
+            # "X available" badge and sold-out check reflect THIS
+            # search, not the listing's static total fleet size.
+            listing.available_count = max(0, listing.available_count - committed)
+
+        for vt in vehicle_types:
+            vt.city_listings.sort(key=lambda l: l.available_count <= 0)
+        vehicle_types.sort(
+            key=lambda vt: all(l.available_count <= 0 for l in vt.city_listings)
+        )
 
         return vehicle_types
 
@@ -408,12 +415,6 @@ class VehicleDetailService:
         terms = VehicleDetailService._get_current_terms(listing)
         operating_hours = VehicleDetailService._build_operating_hours(listing)
 
-        def absolute_url(image_field):
-            if not image_field:
-                return None
-            url = image_field.url
-            return request.build_absolute_uri(url) if request else url
-
         images = listing.images.all()
         image_urls = [
             VehicleDetailService._absolute_url(request, img.image) for img in images
@@ -432,14 +433,31 @@ class VehicleDetailService:
         searched_duration = None
         is_available = True
         availability_message = None
+        displayed_available_count = listing.available_count
+
+        if listing.available_count <= 0:
+            is_available = False
+            availability_message = "This vehicle is sold out at this location"
 
         if pickup_str and dropoff_str:
             pickup_dt = datetime.fromisoformat(pickup_str)
             dropoff_dt = datetime.fromisoformat(dropoff_str)
 
-            is_available, availability_message = AvailabilityService.is_available(
-                listing.pk, pickup_dt, dropoff_dt
-            )
+            # Only run the schedule check if not already blocked by
+            # having zero total fleet — that's true regardless of dates.
+            if is_available:
+                is_available, availability_message = AvailabilityService.is_available(
+                    listing.pk, pickup_dt, dropoff_dt
+                )
+
+            if is_available:
+                remaining = AvailabilityService.get_remaining_capacity(
+                    listing.available_count, listing.pk, pickup_dt, dropoff_dt
+                )
+                displayed_available_count = remaining
+                if remaining <= 0:
+                    is_available = False
+                    availability_message = "No vehicles available for these dates"
 
             duration_hours = AvailabilityService.compute_duration_hours(
                 pickup_dt, dropoff_dt
@@ -501,7 +519,7 @@ class VehicleDetailService:
             "km_limit_per_day": listing.km_limit_per_day,
             "images": image_urls,
             "primary_image": primary_image,
-            "available_count": listing.available_count,
+            "available_count": displayed_available_count,
             "packages": packages,
             "selected_package_id": selected[0].pk if selected else None,
             "searched_duration": searched_duration,
@@ -547,11 +565,20 @@ class VehicleDetailService:
         if listing is None:
             return None, "Vehicle listing not found"
 
+        if listing.available_count <= 0:
+            return None, "This vehicle is sold out at this location"
+
         is_available, message = AvailabilityService.is_available(
             listing_id, pickup_dt, dropoff_dt
         )
         if not is_available:
             return None, message
+
+        remaining_capacity = AvailabilityService.get_remaining_capacity(
+            listing.available_count, listing_id, pickup_dt, dropoff_dt
+        )
+        if remaining_capacity <= 0:
+            return None, "No vehicles available for these dates"
 
         all_packages = list(listing.pricing_packages.all())
         duration_hours = AvailabilityService.compute_duration_hours(
@@ -599,7 +626,7 @@ class VehicleDetailService:
             "primary_image": VehicleDetailService._absolute_url(
                 request, vt.primary_image
             ),
-            "available_count": listing.available_count,
+            "available_count": remaining_capacity,
             "unit_rent_amount": float(unit_rent_amount),
             "unit_refundable_deposit": float(listing.security_deposit_amount),
             "can_pay_partial": can_pay_partial,
