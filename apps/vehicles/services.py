@@ -59,19 +59,24 @@ class AvailabilityService:
                     if pickup_dt.time() < day_schedule.open_time:
                         return (
                             False,
-                            f"Pickup time is before opening hours ({day_schedule.open_time.strftime("%I:%M %p")})",
+                            f"Pickup time is before opening hours ({day_schedule.open_time.strftime('%I:%M %p')})",
                         )
-                    if pickup_dt.time() >= day_schedule.close_time:
+                    if pickup_dt.time() > day_schedule.close_time:
                         return (
                             False,
-                            f"Pickup time is after closing hours ({day_schedule.close_time.strftime("%I:%M %p")})",
+                            f"Pickup time is after closing hours ({day_schedule.close_time.strftime('%I:%M %p')})",
                         )
 
                 if is_dropoff_day:
+                    if dropoff_dt.time() < day_schedule.open_time:
+                        return (
+                            False,
+                            f"Dropoff time is before opening hours ({day_schedule.open_time.strftime('%I:%M %p')})",
+                        )
                     if dropoff_dt.time() > day_schedule.close_time:
                         return (
                             False,
-                            f"Dropoff time is after closing hours ({day_schedule.close_time.strftime("%I:%M %p")})",
+                            f"Dropoff time is after closing hours ({day_schedule.close_time.strftime('%I:%M %p')})",
                         )
 
             current += timedelta(days=1)
