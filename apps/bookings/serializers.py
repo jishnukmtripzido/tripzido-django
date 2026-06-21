@@ -1,10 +1,8 @@
 # apps/bookings/serializers.py
 
 from rest_framework import serializers
-from apps.bookings.models import Booking
+from apps.bookings.models import Booking, BookingCancellation
 from apps.payments.models import Payment
-from apps.bookings.models import Booking
-from apps.bookings.repositories import BookingRepository
 
 # ── List view (BookingsList.tsx card) ──────────────────────────────────
 
@@ -83,6 +81,79 @@ class BookingListSerializer(serializers.ModelSerializer):
         return float(booking.security_deposit_amount)
 
 
+# ── Cancellation ──────────────────────────────────────────────────────
+
+
+class CancelBookingRequestSerializer(serializers.Serializer):
+    """
+    Request body for POST /api/bookings/{id}/cancel/. Reason codes are
+    restricted to BookingCancellation.CUSTOMER_REASON_CODES — vendor/
+    admin-only reasons (e.g. VENDOR_BREAKDOWN) aren't valid here since
+    this endpoint is only ever called by the booking's own customer.
+    """
+
+    reason_code = serializers.ChoiceField(
+        choices=BookingCancellation.CUSTOMER_REASON_CODES
+    )
+    reason_text = serializers.CharField(
+        required=False, allow_blank=True, max_length=1000
+    )
+
+    def validate(self, attrs):
+        is_other = attrs["reason_code"] == BookingCancellation.CancellationReason.OTHER
+        if is_other and not attrs.get("reason_text", "").strip():
+            raise serializers.ValidationError(
+                {"reason_text": "Please tell us a bit more when selecting 'Other'."}
+            )
+        return attrs
+
+
+class CancellationPolicyRuleSerializer(serializers.Serializer):
+    """
+    One row of the full refund schedule, as shaped by
+    apps.administrations.services.CancellationPolicyService.get_current_policy().
+    """
+
+    hours_before_pickup = serializers.IntegerField()
+    refund_percentage = serializers.IntegerField()
+    label = serializers.CharField()
+    description = serializers.CharField()
+
+
+class CancellationPreviewSerializer(serializers.Serializer):
+    """Response shape for GET /api/bookings/{id}/cancellation-preview/."""
+
+    hours_before_pickup = serializers.FloatField()
+    refund_percentage = serializers.FloatField()
+    paid_amount = serializers.FloatField()
+    refundable_amount = serializers.FloatField()
+    forfeited_amount = serializers.FloatField()
+    policy_rules = CancellationPolicyRuleSerializer(many=True)
+    policy_note = serializers.CharField(allow_blank=True)
+
+
+class BookingCancellationSerializer(serializers.ModelSerializer):
+    """Response shape after a successful cancellation, and the nested
+    `cancellation` field on BookingDetailSerializer once cancelled."""
+
+    reason_label = serializers.CharField(source="get_reason_code_display")
+
+    class Meta:
+        model = BookingCancellation
+        fields = [
+            "id",
+            "booking_id",
+            "reason_code",
+            "reason_label",
+            "reason_text",
+            "hours_before_pickup_at_cancellation",
+            "refund_percentage",
+            "refundable_amount",
+            "forfeited_amount",
+            "created_at",
+        ]
+
+
 # ── Detail view ─────────────────────────────────────────────────────────
 
 
@@ -136,6 +207,7 @@ class BookingDetailSerializer(serializers.ModelSerializer):
     payments = BookingPaymentSerializer(many=True, read_only=True)
 
     can_cancel = serializers.SerializerMethodField()
+    cancellation = serializers.SerializerMethodField()
 
     class Meta:
         model = Booking
@@ -168,6 +240,7 @@ class BookingDetailSerializer(serializers.ModelSerializer):
             "cancelled_by_role",
             "payments",
             "can_cancel",
+            "cancellation",
             "created_at",
         ]
 
@@ -205,49 +278,14 @@ class BookingDetailSerializer(serializers.ModelSerializer):
         return format_duration(hours)
 
     def get_can_cancel(self, booking) -> bool:
-        return booking.status in (
-            Booking.Status.PENDING_PAYMENT,
-            Booking.Status.CONFIRMED,
-        )
+        # Mirrors CancellationService.CANCELLABLE_STATUSES — kept as a
+        # literal status check here (rather than importing the service)
+        # to avoid a serializers → services import cycle. Keep these in
+        # sync if the cancellable-status rule ever changes.
+        return booking.status == Booking.Status.CONFIRMED
 
-
-class BookingQueryService:
-
-    # Maps the frontend tab name to the Booking.Status values it covers.
-    # "cancelled" is intentionally broader than just CANCELLED — from the
-    # customer's point of view, payment-failed and expired-unpaid bookings
-    # are all "didn't happen" outcomes that belong in the same bucket.
-    TAB_STATUS_MAP: dict[str, list[str]] = {
-        "pending": [Booking.Status.PENDING_PAYMENT],
-        "confirmed": [Booking.Status.CONFIRMED],
-        "ongoing": [Booking.Status.ONGOING],
-        "completed": [Booking.Status.COMPLETED],
-        "cancelled": [
-            Booking.Status.CANCELLED,
-            Booking.Status.PAYMENT_FAILED,
-            Booking.Status.EXPIRED,
-        ],
-    }
-
-    @staticmethod
-    def statuses_for_tab(tab: str) -> list[str] | None:
-        """Returns the status list for a tab name, or None if unrecognised."""
-        return BookingQueryService.TAB_STATUS_MAP.get(tab.lower())
-
-    @staticmethod
-    def get_customer_bookings(customer, tab: str):
-        """
-        Returns (queryset, None) on success, or (None, error_message) if
-        `tab` isn't one of the recognised tab names.
-        """
-        statuses = BookingQueryService.statuses_for_tab(tab)
-        if statuses is None:
-            valid = ", ".join(BookingQueryService.TAB_STATUS_MAP.keys())
-            return None, f"Invalid status filter. Must be one of: {valid}"
-
-        return BookingRepository.get_bookings_for_customer(customer, statuses), None
-
-    @staticmethod
-    def get_booking_detail(booking_id: int, customer):
-        """Returns the Booking instance, or None if not found / not owned by customer."""
-        return BookingRepository.get_booking_by_id_for_customer(booking_id, customer)
+    def get_cancellation(self, booking):
+        cancellation = getattr(booking, "cancellation", None)
+        if cancellation is None:
+            return None
+        return BookingCancellationSerializer(cancellation).data

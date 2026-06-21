@@ -1,29 +1,42 @@
-from django.http import HttpResponse
-from django.views import View
-from django.utils.decorators import method_decorator
-from django.views.decorators.csrf import csrf_exempt
-from rest_framework.generics import GenericAPIView
-from rest_framework import status
-from rest_framework.permissions import IsAuthenticated, AllowAny
-from datetime import datetime
 import json
 import logging
+from datetime import datetime
 
-from apps.bookings.services import BookingCheckoutService
-from apps.bookings.signature import verify_cashfree_signature
-from apps.bookings.cashfree_client import CashfreeClient
-from apps.core.responses import success_response, error_response
+# Django
 from django.conf import settings
-from rest_framework.generics import GenericAPIView
-from rest_framework.permissions import IsAuthenticated
-from rest_framework import status
-from drf_spectacular.utils import extend_schema, OpenApiParameter
-from drf_spectacular.types import OpenApiTypes
+from django.http import HttpResponse
+from django.utils.decorators import method_decorator
+from django.views import View
+from django.views.decorators.csrf import csrf_exempt
 
-from apps.core.responses import success_response, error_response
+# Django Rest Framework
+from rest_framework import status
+from rest_framework.generics import GenericAPIView
+from rest_framework.permissions import AllowAny, IsAuthenticated
+
+# DRF Spectacular
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiParameter, extend_schema
+
+# Local Apps - Bookings
+from apps.bookings.cashfree_client import CashfreeClient
+from apps.bookings.serializers import (
+    BookingCancellationSerializer,
+    BookingDetailSerializer,
+    BookingListSerializer,
+    CancellationPreviewSerializer,
+    CancelBookingRequestSerializer,
+)
+from apps.bookings.services import (
+    BookingCheckoutService,
+    BookingQueryService,
+    CancellationService,
+)
+from apps.bookings.signature import verify_cashfree_signature
+
+# Local Apps - Core
 from apps.core.pagination import CustomPagination
-from apps.bookings.services import BookingQueryService
-from apps.bookings.serializers import BookingListSerializer, BookingDetailSerializer
+from apps.core.responses import error_response, success_response
 
 logger = logging.getLogger(__name__)
 
@@ -237,5 +250,82 @@ class CustomerBookingDetailView(GenericAPIView):
         return success_response(
             data=serializer.data,
             message="Booking details retrieved successfully",
+            status=status.HTTP_200_OK,
+        )
+
+
+class BookingCancellationPreviewView(GenericAPIView):
+    """
+    GET /api/bookings/{id}/cancellation-preview/
+
+    Lets the frontend show "you'll get ₹X back" before the customer
+    confirms cancellation, plus the full refund schedule. Read-only —
+    does not cancel anything.
+    """
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = CancellationPreviewSerializer
+
+    def get(self, request, booking_id: int):
+        booking = BookingQueryService.get_booking_detail(booking_id, request.user)
+        if booking is None:
+            return error_response(
+                message="Booking not found", status=status.HTTP_404_NOT_FOUND
+            )
+
+        preview, error = CancellationService.preview_cancellation(booking)
+        if preview is None:
+            return error_response(message=error, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = CancellationPreviewSerializer(preview)
+        return success_response(
+            data=serializer.data,
+            message="Cancellation preview retrieved successfully",
+            status=status.HTTP_200_OK,
+        )
+
+
+class CancelBookingView(GenericAPIView):
+    """
+    POST /api/bookings/{id}/cancel/
+    Body: { "reason_code": "CHANGE_OF_PLANS", "reason_text": "" }
+
+    Cancels a CONFIRMED booking owned by the requesting customer.
+    Computes and records the refund entitlement but does not call the
+    payment gateway to actually issue it (see CancellationService).
+    """
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = CancelBookingRequestSerializer
+
+    def post(self, request, booking_id: int):
+        booking = BookingQueryService.get_booking_detail(booking_id, request.user)
+        if booking is None:
+            return error_response(
+                message="Booking not found", status=status.HTTP_404_NOT_FOUND
+            )
+
+        request_serializer = CancelBookingRequestSerializer(data=request.data)
+        if not request_serializer.is_valid():
+            return error_response(
+                message="Invalid cancellation request",
+                errors=request_serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        cancellation, error = CancellationService.cancel_booking(
+            booking,
+            cancelled_by_user=request.user,
+            reason_code=request_serializer.validated_data["reason_code"],
+            reason_text=request_serializer.validated_data.get("reason_text", ""),
+        )
+
+        if cancellation is None:
+            return error_response(message=error, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = BookingCancellationSerializer(cancellation)
+        return success_response(
+            data=serializer.data,
+            message="Booking cancelled successfully",
             status=status.HTTP_200_OK,
         )

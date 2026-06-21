@@ -170,3 +170,75 @@ class Booking(BaseModel):
 
     def __str__(self):
         return f"Booking({self.booking_reference}) {self.status}"
+
+
+class BookingCancellation(BaseModel):
+    """
+    Cancellation detail record linked to a booking — one per booking.
+    Captures who cancelled, why, and the refund entitlement computed at
+    cancellation time. `policy_version` snapshots
+    administrations.CancellationPolicy.version at the moment of
+    cancellation (not a live FK) so that later policy edits — including
+    the auto-versioning CancellationPolicy.save() does on every active
+    policy change — never alter the numbers on a past cancellation.
+
+    Reason codes intentionally include vendor/admin-only values
+    (VENDOR_BREAKDOWN, VENDOR_EMERGENCY, ADMIN_ACTION) even though the
+    customer-facing cancel endpoint only accepts a trimmed subset
+    (CHANGE_OF_PLANS, FOUND_BETTER, BOOKED_BY_MISTAKE, TRIP_CANCELLED,
+    OTHER) — see CustomerCancelBookingSerializer / CUSTOMER_REASON_CODES
+    below. Keeping the full enum here means this same model can be
+    reused once vendor- or admin-initiated cancellation is built,
+    without a migration.
+    """
+
+    class CancellationReason(models.TextChoices):
+        CHANGE_OF_PLANS = "CHANGE_OF_PLANS", "Change of Plans"
+        FOUND_BETTER = "FOUND_BETTER", "Found a Better Option"
+        BOOKED_BY_MISTAKE = "BOOKED_BY_MISTAKE", "Booked by Mistake"
+        TRIP_CANCELLED = "TRIP_CANCELLED", "Trip Cancelled"
+        VENDOR_BREAKDOWN = "VENDOR_BREAKDOWN", "Vehicle Breakdown"
+        VENDOR_EMERGENCY = "VENDOR_EMERGENCY", "Vendor Emergency"
+        ADMIN_ACTION = "ADMIN_ACTION", "Admin Action"
+        OTHER = "OTHER", "Other"
+
+    # Customer-initiated cancellation may only use these reason codes.
+    CUSTOMER_REASON_CODES = [
+        CancellationReason.CHANGE_OF_PLANS,
+        CancellationReason.FOUND_BETTER,
+        CancellationReason.BOOKED_BY_MISTAKE,
+        CancellationReason.TRIP_CANCELLED,
+        CancellationReason.OTHER,
+    ]
+
+    booking = models.OneToOneField(
+        Booking, on_delete=models.CASCADE, related_name="cancellation"
+    )
+    cancelled_by = models.ForeignKey(
+        User, on_delete=models.PROTECT, related_name="cancellations_initiated"
+    )
+    cancelled_by_role = models.CharField(
+        max_length=20, choices=Booking.CancelledBy.choices
+    )
+    reason_code = models.CharField(max_length=30, choices=CancellationReason.choices)
+    reason_text = models.TextField(blank=True)  # free text, mainly for OTHER
+
+    # Snapshot of administrations.CancellationPolicy.version at
+    # cancellation time — intentionally NOT a ForeignKey, since that
+    # policy is versioned-and-replaced (see CancellationPolicy.save())
+    # and we want this number frozen regardless of later policy changes.
+    policy_version = models.PositiveIntegerField(null=True, blank=True)
+    hours_before_pickup_at_cancellation = models.DecimalField(
+        max_digits=8, decimal_places=2, null=True, blank=True
+    )
+
+    # Refund entitlement at time of cancellation
+    refund_percentage = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    refundable_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    forfeited_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"Cancellation({self.booking.booking_reference}) by {self.cancelled_by_role}"
