@@ -1,15 +1,17 @@
 from decimal import Decimal
 
 
-def format_duration(total_hours: Decimal) -> str:
+def format_duration(total_hours) -> str:
     """e.g. '2 months', '2 weeks', '1 day 6 hours', '45 minutes'.
 
     Months are approximated as 30 days since hours don't map onto
     calendar months cleanly — fine for a human-readable label, not
     meant for billing math.
     """
-    total_minutes = int((total_hours * 60).to_integral_value())
+    if not isinstance(total_hours, Decimal):
+        total_hours = Decimal(str(total_hours))
 
+    total_minutes = int((total_hours * 60).to_integral_value())
     months, rem = divmod(total_minutes, 30 * 24 * 60)
     weeks, rem = divmod(rem, 7 * 24 * 60)
     days, rem = divmod(rem, 24 * 60)

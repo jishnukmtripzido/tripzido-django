@@ -39,6 +39,8 @@ class ProfileSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "name",
+            "first_name",
+            "last_name",
             "email",
             "mobile_number",
             "mobile_verified",
