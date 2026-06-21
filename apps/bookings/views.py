@@ -14,6 +14,16 @@ from apps.bookings.signature import verify_cashfree_signature
 from apps.bookings.cashfree_client import CashfreeClient
 from apps.core.responses import success_response, error_response
 from django.conf import settings
+from rest_framework.generics import GenericAPIView
+from rest_framework.permissions import IsAuthenticated
+from rest_framework import status
+from drf_spectacular.utils import extend_schema, OpenApiParameter
+from drf_spectacular.types import OpenApiTypes
+
+from apps.core.responses import success_response, error_response
+from apps.core.pagination import CustomPagination
+from apps.bookings.services import BookingQueryService
+from apps.bookings.serializers import BookingListSerializer, BookingDetailSerializer
 
 logger = logging.getLogger(__name__)
 
@@ -160,3 +170,72 @@ class CashfreeWebhookView(View):
         # Always 2xx quickly once verified — Cashfree expects a fast ack
         # and will retry on non-2xx, slow, or missing responses.
         return HttpResponse(status=200)
+
+
+class CustomerBookingsView(GenericAPIView):
+    """
+    GET /api/bookings/?status=pending|confirmed|ongoing|completed|cancelled
+
+    Powers BookingsList.tsx's tab switcher — one tab, one status filter,
+    one paginated request. Defaults to "pending" to match the
+    component's initial `useState<BookingTab>("Pending")`.
+    """
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = BookingListSerializer
+    pagination_class = CustomPagination
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name="status",
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="One of: pending, confirmed, ongoing, completed, cancelled. Defaults to pending.",
+            ),
+        ],
+        responses=BookingListSerializer(many=True),
+    )
+    def get(self, request):
+        tab = request.query_params.get("status", "pending")
+
+        bookings, error = BookingQueryService.get_customer_bookings(request.user, tab)
+        if bookings is None:
+            return error_response(
+                message=error,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        page = self.paginate_queryset(bookings)
+        serializer = self.get_serializer(page, many=True, context={"request": request})
+        paginated_response = self.get_paginated_response(serializer.data)
+
+        return success_response(
+            data=paginated_response.data,
+            message="Bookings retrieved successfully",
+            status=status.HTTP_200_OK,
+        )
+
+
+class CustomerBookingDetailView(GenericAPIView):
+    """GET /api/bookings/{id}/ — full detail for the "View Details" page."""
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = BookingDetailSerializer
+
+    def get(self, request, booking_id: int):
+        booking = BookingQueryService.get_booking_detail(booking_id, request.user)
+
+        if booking is None:
+            return error_response(
+                message="Booking not found",
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        serializer = BookingDetailSerializer(booking, context={"request": request})
+        return success_response(
+            data=serializer.data,
+            message="Booking details retrieved successfully",
+            status=status.HTTP_200_OK,
+        )

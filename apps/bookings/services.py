@@ -4,12 +4,14 @@ from decimal import Decimal
 from django.db import transaction
 from django.utils import timezone
 from datetime import timedelta
-
-from apps.bookings.models import Booking, Payment
+from apps.bookings.models import Booking
+from apps.payments.models import Payment
 from apps.bookings.cashfree_client import CashfreeClient
 from apps.vehicles.repositories import VehicleDetailRepository
 from apps.vehicles.services import AvailabilityService, VehicleDetailService
 from django.conf import settings
+from apps.bookings.models import Booking
+from apps.bookings.repositories import BookingRepository
 
 
 def _generate_booking_reference() -> str:
@@ -272,3 +274,45 @@ class BookingCheckoutService:
             "status": payment.status,
             "booking_references": [b.booking_reference for b in bookings],
         }
+
+
+class BookingQueryService:
+
+    # Maps the frontend tab name to the Booking.Status values it covers.
+    # "cancelled" is intentionally broader than just CANCELLED — from the
+    # customer's point of view, payment-failed and expired-unpaid bookings
+    # are all "didn't happen" outcomes that belong in the same bucket.
+    TAB_STATUS_MAP: dict[str, list[str]] = {
+        "pending": [Booking.Status.PENDING_PAYMENT],
+        "confirmed": [Booking.Status.CONFIRMED],
+        "ongoing": [Booking.Status.ONGOING],
+        "completed": [Booking.Status.COMPLETED],
+        "cancelled": [
+            Booking.Status.CANCELLED,
+            Booking.Status.PAYMENT_FAILED,
+            Booking.Status.EXPIRED,
+        ],
+    }
+
+    @staticmethod
+    def statuses_for_tab(tab: str) -> list[str] | None:
+        """Returns the status list for a tab name, or None if unrecognised."""
+        return BookingQueryService.TAB_STATUS_MAP.get(tab.lower())
+
+    @staticmethod
+    def get_customer_bookings(customer, tab: str):
+        """
+        Returns (queryset, None) on success, or (None, error_message) if
+        `tab` isn't one of the recognised tab names.
+        """
+        statuses = BookingQueryService.statuses_for_tab(tab)
+        if statuses is None:
+            valid = ", ".join(BookingQueryService.TAB_STATUS_MAP.keys())
+            return None, f"Invalid status filter. Must be one of: {valid}"
+
+        return BookingRepository.get_bookings_for_customer(customer, statuses), None
+
+    @staticmethod
+    def get_booking_detail(booking_id: int, customer):
+        """Returns the Booking instance, or None if not found / not owned by customer."""
+        return BookingRepository.get_booking_by_id_for_customer(booking_id, customer)

@@ -77,10 +77,17 @@ class AvailabilityRepository:
     ) -> set[int]:
         """
         Returns listing IDs whose assigned schedule template marks any
-        of the given days as is_closed=True. Listings with no template
-        assigned are NOT included here — they're caught entirely by
-        get_listings_missing_schedule_days instead, since "no template"
-        and "template missing a day" are the same underlying problem.
+        of the given days as is_closed=True.
+
+        Callers should pass only the PICKUP and DROPOFF weekdays here,
+        not every weekday spanned by the trip — a closed day strictly
+        between pickup and dropoff should not block the listing, only
+        the pickup day or dropoff day being closed should.
+
+        Listings with no template assigned are NOT included here —
+        they're caught entirely by get_listings_missing_schedule_days
+        instead, since "no template" and "template missing a day" are
+        the same underlying problem.
         """
         listing_to_template = dict(
             VehicleListing.objects.filter(
@@ -115,8 +122,14 @@ class AvailabilityRepository:
         """
         Returns listing IDs that either have no schedule template
         assigned at all, or whose template is missing an entry for at
-        least one of the required days — both cases mean implicitly
-        closed on that day.
+        least one of the given days — both cases mean implicitly closed
+        on that day.
+
+        Callers should pass only the PICKUP and DROPOFF weekdays here,
+        not every weekday spanned by the trip — a missing entry for a
+        day strictly between pickup and dropoff should not block the
+        listing, only a missing entry on the pickup day or dropoff day
+        should.
         """
         listing_to_template = dict(
             VehicleListing.objects.filter(id__in=listing_ids).values_list(

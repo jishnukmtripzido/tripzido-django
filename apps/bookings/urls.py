@@ -3,6 +3,8 @@ from apps.bookings.views import (
     CreateBookingOrderView,
     BookingPaymentStatusView,
     CashfreeWebhookView,
+    CustomerBookingsView,
+    CustomerBookingDetailView,
 )
 
 urlpatterns = [
@@ -13,4 +15,10 @@ urlpatterns = [
         name="booking-payment-status",
     ),
     path("webhooks/cashfree/", CashfreeWebhookView.as_view(), name="cashfree-webhook"),
+    path("", CustomerBookingsView.as_view(), name="customer-bookings"),
+    path(
+        "<int:booking_id>/",
+        CustomerBookingDetailView.as_view(),
+        name="customer-booking-detail",
+    ),
 ]

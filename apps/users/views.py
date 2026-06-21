@@ -20,6 +20,12 @@ from apps.core.responses import success_response, error_response
 from .serializers import SendOTPSerializer, VerifyOTPSerializer
 from .tasks import send_otp_sms
 import requests
+from rest_framework.generics import GenericAPIView
+from rest_framework.permissions import IsAuthenticated
+from rest_framework import status
+from apps.core.responses import success_response, error_response
+from .services import UserService
+from .serializers import ProfileSerializer, ProfileUpdateSerializer
 
 
 class SendOTPView(APIView):
@@ -194,3 +200,41 @@ class LogoutView(APIView):
                 errors=str(e),
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+
+class ProfileView(GenericAPIView):
+    """
+    GET  /api/users/me/   -> current user's profile
+    PATCH /api/users/me/  -> partial update of name / email / address
+    """
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = ProfileSerializer
+
+    def get(self, request):
+        serializer = ProfileSerializer(request.user)
+        return success_response(
+            data=serializer.data,
+            message="Profile retrieved successfully",
+            status=status.HTTP_200_OK,
+        )
+
+    def patch(self, request):
+        update_serializer = ProfileUpdateSerializer(data=request.data)
+        if not update_serializer.is_valid():
+            return error_response(
+                message="Invalid profile data",
+                errors=update_serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        updated_user = UserService.update_profile(
+            request.user, update_serializer.to_internal_fields()
+        )
+
+        response_serializer = ProfileSerializer(updated_user)
+        return success_response(
+            data=response_serializer.data,
+            message="Profile updated successfully",
+            status=status.HTTP_200_OK,
+        )

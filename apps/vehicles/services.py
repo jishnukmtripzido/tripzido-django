@@ -20,9 +20,18 @@ class AvailabilityService:
     ) -> tuple[bool, str]:
         """
         Checks whether the listing's recurring weekly schedule is open
-        for the entire pickup→dropoff window — correct days present,
-        not marked closed, pickup/dropoff times within open/close
-        hours.
+        for the pickup and dropoff days specifically — correct days
+        present, not marked closed, pickup/dropoff times within
+        open/close hours.
+
+        Days strictly BETWEEN pickup and dropoff are NOT required to be
+        open, and a missing schedule entry on one of those middle days
+        does NOT block the booking either — a closed day (or a day with
+        no schedule entry at all) in the middle of a multi-day trip
+        doesn't matter, since the vehicle is already with the customer
+        and no pickup/dropoff activity happens on that day. Only the
+        pickup date and dropoff date themselves must be open and have a
+        schedule entry.
 
         This is purely a "is the business open" check. It does NOT
         check fleet capacity — a listing can be open for business but
@@ -35,21 +44,35 @@ class AvailabilityService:
 
         current = pickup_dt
         while current.date() <= dropoff_dt.date():
-            day = current.weekday()
-            day_schedule = schedule.get(day)
+            is_pickup_day = current.date() == pickup_dt.date()
+            is_dropoff_day = current.date() == dropoff_dt.date()
+            is_boundary_day = is_pickup_day or is_dropoff_day
 
-            if day_schedule is None or day_schedule.is_closed:
-                return False, f"Listing is closed on {current.strftime('%A')}s"
+            if is_boundary_day:
+                day = current.weekday()
+                day_schedule = schedule.get(day)
 
-            if current.date() == pickup_dt.date():
-                if pickup_dt.time() < day_schedule.open_time:
-                    return False, "Pickup time is before opening hours"
-                if pickup_dt.time() >= day_schedule.close_time:
-                    return False, "Pickup time is after closing hours"
+                if day_schedule is None or day_schedule.is_closed:
+                    return False, f"Listing is closed on {current.strftime('%A')}s"
 
-            if current.date() == dropoff_dt.date():
-                if dropoff_dt.time() > day_schedule.close_time:
-                    return False, "Dropoff time is after closing hours"
+                if is_pickup_day:
+                    if pickup_dt.time() < day_schedule.open_time:
+                        return (
+                            False,
+                            f"Pickup time is before opening hours ({day_schedule.open_time.strftime("%I:%M %p")})",
+                        )
+                    if pickup_dt.time() >= day_schedule.close_time:
+                        return (
+                            False,
+                            f"Pickup time is after closing hours ({day_schedule.close_time.strftime("%I:%M %p")})",
+                        )
+
+                if is_dropoff_day:
+                    if dropoff_dt.time() > day_schedule.close_time:
+                        return (
+                            False,
+                            f"Dropoff time is after closing hours ({day_schedule.close_time.strftime("%I:%M %p")})",
+                        )
 
             current += timedelta(days=1)
 
@@ -64,18 +87,19 @@ class AvailabilityService:
         if not listing_ids:
             return []
 
-        required_days = set()
-        current = pickup_dt
-        while current.date() <= dropoff_dt.date():
-            required_days.add(current.weekday())
-            current += timedelta(days=1)
+        # Only the pickup day and dropoff day matter for the closed /
+        # missing-schedule checks below. A closed day, or a day with no
+        # schedule entry at all, strictly in between pickup and dropoff
+        # does NOT block the listing — only the pickup day or dropoff
+        # day being closed or missing a schedule entry does.
+        boundary_days = {pickup_dt.weekday(), dropoff_dt.weekday()}
 
         schedule_blocked_ids = AvailabilityRepository.get_schedule_blocked_listing_ids(
-            listing_ids, required_days
+            listing_ids, boundary_days
         )
 
         no_schedule_ids = AvailabilityRepository.get_listings_missing_schedule_days(
-            listing_ids, required_days
+            listing_ids, boundary_days
         )
 
         # Capacity (fully booked / fully blocked for these dates) is
