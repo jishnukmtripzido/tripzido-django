@@ -18,3 +18,29 @@ class UserService:
         where Mobile Number has no Edit affordance).
         """
         return UserRepository.update_user_fields(user, validated_data)
+
+    @staticmethod
+    def create_user(
+        phone_number: str,
+        first_name: str,
+        last_name: str = "",
+        email: str | None = None,
+    ):
+        """
+        Creates a new User with an unusable password (OTP-only auth).
+
+        Args:
+            phone_number: Primary identifier, e.g. "+919876543210".
+            first_name:   Required given name.
+            last_name:    Optional family name.
+            email:        Optional e-mail; stored as NULL when not supplied.
+
+        Returns:
+            The newly created User instance.
+        """
+        return UserRepository.create_user(
+            phone_number=phone_number,
+            first_name=first_name,
+            last_name=last_name,
+            email=email,
+        )

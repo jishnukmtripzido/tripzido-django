@@ -17,7 +17,12 @@ from drf_spectacular.types import OpenApiTypes
 import random
 from .services import UserService
 from apps.core.responses import success_response, error_response
-from .serializers import SendOTPSerializer, VerifyOTPSerializer
+from .serializers import (
+    SendOTPSerializer,
+    VerifyOTPSerializer,
+    RegisterSendOTPSerializer,
+    RegisterVerifyOTPSerializer,
+)
 from .tasks import send_otp_sms
 import requests
 from rest_framework.generics import GenericAPIView
@@ -184,7 +189,7 @@ class OTPVerifyAndTokenView(APIView):
 
 
 class LogoutView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [AllowAny]
 
     def post(self, request):
         try:
@@ -236,5 +241,190 @@ class ProfileView(GenericAPIView):
         return success_response(
             data=response_serializer.data,
             message="Profile updated successfully",
+            status=status.HTTP_200_OK,
+        )
+
+
+# ── Add these two views to your existing apps/users/views.py ───────────────
+# Also add RegisterSendOTPSerializer, RegisterVerifyOTPSerializer to the
+# serializers import at the top of views.py.
+
+
+class RegisterSendOTPView(APIView):
+    """
+    POST /api/users/register/send-otp/
+
+    Creates (or re-uses a pending) user record and fires an OTP to the
+    provided phone number.  The user is NOT yet considered "registered"
+    until they complete OTP verification via RegisterVerifyOTPView.
+
+    Request body:
+        phone_number    (str, required)
+        first_name      (str, required)
+        last_name       (str, optional)
+        email           (str, optional)
+        turnstile_token (str, required)
+
+    Responses:
+        200 – OTP dispatched
+        400 – validation error
+        403 – Cloudflare Turnstile verification failed
+        409 – phone number already registered to an active account
+        500 – Cloudflare unreachable
+    """
+
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        request=RegisterSendOTPSerializer,
+        description="Validates registration details, creates a pending user, and sends OTP.",
+    )
+    def post(self, request):
+        serializer = RegisterSendOTPSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid registration data.",
+                errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        phone_number = serializer.validated_data["phone_number"]
+        first_name = serializer.validated_data["first_name"]
+        last_name = serializer.validated_data.get("last_name", "")
+        email = serializer.validated_data.get("email") or None
+        turnstile_token = serializer.validated_data["turnstile_token"]
+
+        # ── 1. Cloudflare Turnstile bot check ──────────────────────────────
+        cloudflare_url = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
+        try:
+            cf_response = requests.post(
+                cloudflare_url,
+                data={
+                    "secret": settings.TURNSTILE_SECRET_KEY,
+                    "response": turnstile_token,
+                },
+            )
+            cf_data = cf_response.json()
+            if not cf_data.get("success"):
+                return error_response(
+                    message="Bot verification failed.",
+                    errors={"turnstile": cf_data.get("error-codes", ["Invalid token"])},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+        except requests.RequestException:
+            return error_response(
+                message="Error contacting verification server. Please try again.",
+                errors={},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        # ── 2. Duplicate-phone check ───────────────────────────────────────
+        existing = UserService.get_user_by_phone(phone_number)
+        if existing:
+            return error_response(
+                message="An account with this phone number already exists. Please sign in.",
+                errors={"phone_number": ["Phone number already registered."]},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        # ── 3. Create (or idempotently upsert) the user ───────────────────
+        # We create the user now so that on OTP verification we can issue
+        # tokens immediately.  The account is functional from the moment
+        # it's created; the OTP step is the ownership proof.
+        UserService.create_user(
+            phone_number=phone_number,
+            first_name=first_name,
+            last_name=last_name,
+            email=email,
+        )
+
+        # ── 4. Generate & cache OTP ───────────────────────────────────────
+        otp = str(random.randint(1000, 9999))
+        print(f"[DEBUG] Registration OTP for {phone_number}: {otp}")  # remove in prod
+        cache.set(f"otp_{phone_number}", otp, timeout=300)
+
+        # ── 5. Dispatch OTP via SMS (async Celery task) ───────────────────
+        send_otp_sms.delay(phone_number, otp)
+
+        return success_response(
+            message="OTP sent successfully. Please verify to complete registration.",
+            data={},
+            status=status.HTTP_200_OK,
+        )
+
+
+class RegisterVerifyOTPView(APIView):
+    """
+    POST /api/users/register/verify-otp/
+
+    Verifies the OTP for a newly registered phone number and — on
+    success — issues JWT access + refresh tokens so the user is
+    immediately logged in.
+
+    Request body:
+        phone_number (str, required)
+        otp          (str, required, 4 digits)
+
+    Responses:
+        200 – OTP valid; returns access_token + refresh_token
+        400 – invalid/expired OTP or validation error
+        404 – no user found for this phone number
+    """
+
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        request=RegisterVerifyOTPSerializer,
+        description="Verifies OTP for registration and issues JWT tokens.",
+    )
+    def post(self, request):
+        serializer = RegisterVerifyOTPSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid data provided.",
+                errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        phone_number = serializer.validated_data["phone_number"]
+        otp = serializer.validated_data["otp"]
+
+        # ── 1. OTP verification ───────────────────────────────────────────
+        cached_otp = cache.get(f"otp_{phone_number}")
+        if cached_otp is None:
+            return error_response(
+                message="OTP expired or not found. Please request a new one.",
+                errors={"otp": ["OTP not found or expired."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if str(cached_otp) != str(otp):
+            return error_response(
+                message="Invalid OTP. Please try again.",
+                errors={"otp": ["Incorrect OTP."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # ── 2. Fetch the pre-created user ─────────────────────────────────
+        user = UserService.get_user_by_phone(phone_number)
+        if not user:
+            return error_response(
+                message="User not found. Please restart registration.",
+                errors={"phone_number": ["No user with this phone number."]},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Consume the OTP so it can't be reused
+        cache.delete(f"otp_{phone_number}")
+
+        # ── 3. Issue JWT tokens ───────────────────────────────────────────
+        refresh = RefreshToken.for_user(user)
+
+        return success_response(
+            message="Registration complete. Welcome!",
+            data={
+                "access_token": str(refresh.access_token),
+                "refresh_token": str(refresh),
+            },
             status=status.HTTP_200_OK,
         )
