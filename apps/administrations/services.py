@@ -1,4 +1,8 @@
-from apps.administrations.repositories import CancellationPolicyRepository
+from apps.administrations.repositories import (
+    CancellationPolicyRepository,
+    OfferRepository,
+    PopularRentalRepository,
+)
 
 
 class CancellationPolicyService:
@@ -48,3 +52,35 @@ class CancellationPolicyService:
             "rules": rules,
             "note": policy.refund_note,
         }
+
+
+class OfferService:
+
+    @staticmethod
+    def get_offers() -> list:
+        """
+        Returns active offers with is_featured annotated on the first item
+        (lowest sort_order). The serializer reads this boolean so the
+        frontend knows which card gets the yellow styling.
+        """
+        offers = list(OfferRepository.get_active_offers())
+        for idx, offer in enumerate(offers):
+            offer.is_featured = idx == 0
+        return offers
+
+
+class PopularRentalService:
+
+    @staticmethod
+    def get_popular_rentals(city_id: int) -> list:
+        """
+        Returns active PopularRental objects for the given city with
+        resolved_name and resolved_image annotated so the serializer
+        never branches on optional override fields.
+        """
+        rentals = list(PopularRentalRepository.get_active_by_city(city_id))
+        for rental in rentals:
+            vt = rental.vehicle_type
+            rental.resolved_name = rental.display_name or vt.name
+            rental.resolved_image = rental.display_image or vt.primary_image or None
+        return rentals

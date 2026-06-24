@@ -83,3 +83,122 @@ class CancellationTier(BaseModel):
             f"{self.min_hours_before_pickup}–{self.max_hours_before_pickup or '∞'} hrs "
             f"→ {self.refund_percentage}% refund"
         )
+
+
+# ── Offers ────────────────────────────────────────────────────────────
+
+
+class Offer(BaseModel):
+    """
+    Promotional offer card shown in the "Ride more, pay less" section.
+
+    The card with the lowest sort_order is automatically the "featured"
+    (yellow) card — controlled by OfferService annotating is_featured=True
+    on the first item. Admin reorders cards by editing sort_order values.
+    """
+
+    class IconType(models.TextChoices):
+        STAR = "STAR", "Star"
+        CALCULATOR = "CALCULATOR", "Calculator"
+        LIGHTNING = "LIGHTNING", "Lightning Bolt"
+        BELL = "BELL", "Bell"
+        COIN = "COIN", "Coin / Rupee"
+
+    title = models.CharField(max_length=200)
+    description = models.TextField(
+        help_text="Short benefit description shown on the card."
+    )
+    icon_type = models.CharField(
+        max_length=20,
+        choices=IconType.choices,
+        default=IconType.STAR,
+        help_text="SVG icon rendered on the frontend. STAR is used for the featured yellow card.",
+    )
+    coupon_code = models.CharField(
+        max_length=50,
+        blank=True,
+        help_text="Optional coupon code the customer enters at checkout.",
+    )
+    discount_amount = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Flat discount in ₹.",
+    )
+    min_order_amount = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Minimum booking value to unlock this offer.",
+    )
+    valid_from = models.DateTimeField(null=True, blank=True)
+    valid_until = models.DateTimeField(null=True, blank=True)
+    is_active = models.BooleanField(default=True, db_index=True)
+    sort_order = models.PositiveSmallIntegerField(
+        default=0,
+        db_index=True,
+        help_text="Lowest sort_order = featured (yellow) card.",
+    )
+
+    class Meta:
+        ordering = ["sort_order", "created_at"]
+
+    def __str__(self):
+        return self.title
+
+
+# ── Popular Rentals ───────────────────────────────────────────────────
+
+
+class PopularRental(BaseModel):
+    """
+    A curated VehicleType pinned to a City for the "Popular rentals in
+    <City>" homepage carousel.
+
+    display_name / display_price / display_image / tag are all optional
+    overrides — each falls back to the linked VehicleType's value when blank.
+    """
+
+    city = models.ForeignKey(
+        "locations.City",
+        on_delete=models.CASCADE,
+        related_name="popular_rentals",
+    )
+    vehicle_type = models.ForeignKey(
+        "vehicles.VehicleType",
+        on_delete=models.CASCADE,
+        related_name="popular_rentals",
+    )
+    display_name = models.CharField(
+        max_length=200,
+        blank=True,
+        help_text="Override for the card title. Falls back to VehicleType.name.",
+    )
+    display_price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="'Starting from' price shown on the card. Falls back to VehicleType's cheapest live package.",
+    )
+    display_image = models.ImageField(
+        upload_to="popular_rentals/",
+        null=True,
+        blank=True,
+        help_text="Card image override. Falls back to VehicleType.primary_image.",
+    )
+    tag = models.CharField(
+        max_length=50,
+        blank=True,
+        help_text="Badge text shown on the card e.g. 'Best Seller', 'New'.",
+    )
+    sort_order = models.PositiveSmallIntegerField(default=0, db_index=True)
+
+    class Meta:
+        unique_together = ("city", "vehicle_type")
+        ordering = ["city", "sort_order", "created_at"]
+
+    def __str__(self):
+        return f"{self.vehicle_type} — {self.city.name}"
