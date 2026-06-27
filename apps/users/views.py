@@ -15,6 +15,7 @@ from drf_spectacular.utils import extend_schema
 from drf_spectacular.openapi import OpenApiParameter
 from drf_spectacular.types import OpenApiTypes
 import random
+import json
 from .services import UserService
 from apps.core.responses import success_response, error_response
 from .serializers import (
@@ -31,13 +32,14 @@ from rest_framework import status
 from apps.core.responses import success_response, error_response
 from .services import UserService
 from .serializers import ProfileSerializer, ProfileUpdateSerializer
+from .repositories import normalize_phone  # shared helper — single source of truth
 
 
 class SendOTPView(APIView):
     permission_classes = [AllowAny]
 
     @extend_schema(
-        request=SendOTPSerializer,  # Tells Swagger to expect a JSON body matching this serializer
+        request=SendOTPSerializer,
         description="Sends an OTP to the provided phone number.",
     )
     def post(self, request):
@@ -58,6 +60,9 @@ class SendOTPView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Normalise to local number — consistent with DB storage
+        local_number, _ = normalize_phone(phone_number)
+
         # ==========================================
         # 1. CLOUDFLARE TURNSTILE VERIFICATION
         # ==========================================
@@ -69,7 +74,6 @@ class SendOTPView(APIView):
             )
 
         cloudflare_url = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
-        # Ensure you add TURNSTILE_SECRET_KEY to your Django settings.py
         cf_payload = {
             "secret": settings.TURNSTILE_SECRET_KEY,
             "response": turnstile_token,
@@ -82,12 +86,10 @@ class SendOTPView(APIView):
             if not cf_data.get("success"):
                 return error_response(
                     message="Bot verification failed.",
-                    # Cloudflare returns error-codes if validation fails
                     errors={"turnstile": cf_data.get("error-codes", ["Invalid token"])},
                     status=status.HTTP_403_FORBIDDEN,
                 )
         except requests.RequestException:
-            # Handle the rare case where Cloudflare is unreachable
             return error_response(
                 message="Error contacting verification server. Please try again.",
                 errors={},
@@ -95,10 +97,10 @@ class SendOTPView(APIView):
             )
         # ==========================================
         # END VERIFICATION
-        # =====
+        # ==========================================
 
-        # check if user exists with this phone number
-        user = UserService.get_user_by_phone(phone_number)
+        # DB lookup uses local number
+        user = UserService.get_user_by_phone(local_number)
         if not user:
             return error_response(
                 message="User with this phone number does not exist. Please register first.",
@@ -108,19 +110,14 @@ class SendOTPView(APIView):
 
         # Generate a random 4-digit OTP
         otp = str(random.randint(1000, 9999))
+        print(f"Generated OTP for {local_number}: {otp}")  # Remove in production
 
-        print(
-            f"Generated OTP for {phone_number}: {otp}"
-        )  # For debugging, remove in production
+        # Cache key uses local number — same format as DB
+        cache.set(f"otp_{local_number}", otp, timeout=300)
 
-        # Store the OTP in Redis with a 5-minute expiration
-        cache.set(f"otp_{phone_number}", otp, timeout=300)
-
-        # 🚀 Fire and forget — no waiting
+        # Pass full E.164 to SMS gateway so the carrier can route it
         send_otp_sms.delay(phone_number, otp)
 
-        # Here you would integrate with an SMS gateway to send the OTP to the user's phone number.
-        # For this example, we'll just return the OTP in the response (not recommended for production).
         return success_response(
             message="OTP sent successfully", data={}, status=status.HTTP_200_OK
         )
@@ -129,13 +126,12 @@ class SendOTPView(APIView):
 class OTPVerifyAndTokenView(APIView):
     """
     After OTP is verified, call this to get JWT tokens.
-    Your OTP verification logic runs first, then this issues the tokens.
     """
 
     permission_classes = [AllowAny]
 
     @extend_schema(
-        request=VerifyOTPSerializer,  # Tells Swagger to expect a JSON body matching this
+        request=VerifyOTPSerializer,
         description="Verifies the provided OTP and issues JWT tokens if valid.",
     )
     def post(self, request):
@@ -146,12 +142,15 @@ class OTPVerifyAndTokenView(APIView):
                 errors=serializer.errors,
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
         phone_number = serializer.validated_data.get("phone_number")
         otp = request.data.get("otp")
 
-        # 1. verify OTP here
-        # fetch the stored code from redis
-        cached_otp = cache.get(f"otp_{phone_number}")
+        # Normalise — caller may send "+919876543210" or "9876543210"
+        local_number, _ = normalize_phone(phone_number)
+
+        # 1. verify OTP — fetch the stored code from Redis
+        cached_otp = cache.get(f"otp_{local_number}")
         if cached_otp is None:
             return error_response(
                 message="OTP expired or not found. Please request a new one.",
@@ -166,14 +165,17 @@ class OTPVerifyAndTokenView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # 2. get or create user
-        user = UserService.get_user_by_phone(phone_number)
+        # 2. fetch user
+        user = UserService.get_user_by_phone(local_number)
         if not user:
             return error_response(
                 message="User not found. Please register first.",
                 errors={"phone_number": ["No user with this phone number."]},
                 status=status.HTTP_404_NOT_FOUND,
             )
+
+        # Consume OTP so it cannot be replayed
+        cache.delete(f"otp_{local_number}")
 
         # 3. issue tokens
         refresh = RefreshToken.for_user(user)
@@ -195,7 +197,7 @@ class LogoutView(APIView):
         try:
             refresh_token = request.data["refresh_token"]
             token = RefreshToken(refresh_token)
-            token.blacklist()  # This will blacklist the token, preventing future use
+            token.blacklist()
             return success_response(
                 message="Logged out successfully", data={}, status=status.HTTP_200_OK
             )
@@ -245,39 +247,21 @@ class ProfileView(GenericAPIView):
         )
 
 
-# ── Add these two views to your existing apps/users/views.py ───────────────
-# Also add RegisterSendOTPSerializer, RegisterVerifyOTPSerializer to the
-# serializers import at the top of views.py.
-
-
 class RegisterSendOTPView(APIView):
     """
     POST /api/users/register/send-otp/
 
-    Creates (or re-uses a pending) user record and fires an OTP to the
-    provided phone number.  The user is NOT yet considered "registered"
-    until they complete OTP verification via RegisterVerifyOTPView.
-
-    Request body:
-        phone_number    (str, required)
-        first_name      (str, required)
-        last_name       (str, optional)
-        email           (str, optional)
-        turnstile_token (str, required)
-
-    Responses:
-        200 – OTP dispatched
-        400 – validation error
-        403 – Cloudflare Turnstile verification failed
-        409 – phone number already registered to an active account
-        500 – Cloudflare unreachable
+    Validates the registration payload, stores it in Redis alongside the
+    OTP, and fires the OTP via SMS.  NO database write happens here —
+    the User row is created only after OTP verification succeeds in
+    RegisterVerifyOTPView.
     """
 
     permission_classes = [AllowAny]
 
     @extend_schema(
         request=RegisterSendOTPSerializer,
-        description="Validates registration details, creates a pending user, and sends OTP.",
+        description="Validates registration details, caches the payload, and sends OTP. No DB write occurs here.",
     )
     def post(self, request):
         serializer = RegisterSendOTPSerializer(data=request.data)
@@ -293,6 +277,9 @@ class RegisterSendOTPView(APIView):
         last_name = serializer.validated_data.get("last_name", "")
         email = serializer.validated_data.get("email") or None
         turnstile_token = serializer.validated_data["turnstile_token"]
+
+        # Normalise early — everything below uses local_number for cache keys
+        local_number, country_code = normalize_phone(phone_number)
 
         # ── 1. Cloudflare Turnstile bot check ──────────────────────────────
         cloudflare_url = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
@@ -319,7 +306,7 @@ class RegisterSendOTPView(APIView):
             )
 
         # ── 2. Duplicate-phone check ───────────────────────────────────────
-        existing = UserService.get_user_by_phone(phone_number)
+        existing = UserService.get_user_by_phone(local_number)
         if existing:
             return error_response(
                 message="An account with this phone number already exists. Please sign in.",
@@ -327,23 +314,31 @@ class RegisterSendOTPView(APIView):
                 status=status.HTTP_409_CONFLICT,
             )
 
-        # ── 3. Create (or idempotently upsert) the user ───────────────────
-        # We create the user now so that on OTP verification we can issue
-        # tokens immediately.  The account is functional from the moment
-        # it's created; the OTP step is the ownership proof.
-        UserService.create_user(
-            phone_number=phone_number,
-            first_name=first_name,
-            last_name=last_name,
-            email=email,
+        # ── 3. Generate OTP ───────────────────────────────────────────────
+        otp = str(random.randint(1000, 9999))
+        print(f"[DEBUG] Registration OTP for {local_number}: {otp}")  # Remove in prod
+
+        # ── 4. Cache OTP + registration payload (no DB write) ─────────────
+        #
+        # Cache keys use local_number ("9876543210") — same format as DB.
+        # country_code is stored in the payload so create_user can save it.
+        # Both keys share the same 5-minute TTL.
+        cache.set(f"otp_{local_number}", otp, timeout=300)
+        cache.set(
+            f"reg_payload_{local_number}",
+            json.dumps(
+                {
+                    "local_number": local_number,
+                    "country_code": country_code,
+                    "first_name": first_name,
+                    "last_name": last_name,
+                    "email": email,
+                }
+            ),
+            timeout=300,
         )
 
-        # ── 4. Generate & cache OTP ───────────────────────────────────────
-        otp = str(random.randint(1000, 9999))
-        print(f"[DEBUG] Registration OTP for {phone_number}: {otp}")  # remove in prod
-        cache.set(f"otp_{phone_number}", otp, timeout=300)
-
-        # ── 5. Dispatch OTP via SMS (async Celery task) ───────────────────
+        # ── 5. Dispatch OTP via SMS (full E.164 for carrier routing) ──────
         send_otp_sms.delay(phone_number, otp)
 
         return success_response(
@@ -357,25 +352,15 @@ class RegisterVerifyOTPView(APIView):
     """
     POST /api/users/register/verify-otp/
 
-    Verifies the OTP for a newly registered phone number and — on
-    success — issues JWT access + refresh tokens so the user is
-    immediately logged in.
-
-    Request body:
-        phone_number (str, required)
-        otp          (str, required, 4 digits)
-
-    Responses:
-        200 – OTP valid; returns access_token + refresh_token
-        400 – invalid/expired OTP or validation error
-        404 – no user found for this phone number
+    Verifies the OTP, creates the User row (first DB write), consumes
+    both cache keys, and issues JWT tokens.
     """
 
     permission_classes = [AllowAny]
 
     @extend_schema(
         request=RegisterVerifyOTPSerializer,
-        description="Verifies OTP for registration and issues JWT tokens.",
+        description="Verifies OTP for registration, creates the user, and issues JWT tokens.",
     )
     def post(self, request):
         serializer = RegisterVerifyOTPSerializer(data=request.data)
@@ -389,8 +374,11 @@ class RegisterVerifyOTPView(APIView):
         phone_number = serializer.validated_data["phone_number"]
         otp = serializer.validated_data["otp"]
 
+        # Normalise — caller may send either format
+        local_number, _ = normalize_phone(phone_number)
+
         # ── 1. OTP verification ───────────────────────────────────────────
-        cached_otp = cache.get(f"otp_{phone_number}")
+        cached_otp = cache.get(f"otp_{local_number}")
         if cached_otp is None:
             return error_response(
                 message="OTP expired or not found. Please request a new one.",
@@ -405,19 +393,36 @@ class RegisterVerifyOTPView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # ── 2. Fetch the pre-created user ─────────────────────────────────
-        user = UserService.get_user_by_phone(phone_number)
-        if not user:
+        # ── 2. Load cached registration payload ───────────────────────────
+        raw_payload = cache.get(f"reg_payload_{local_number}")
+        if not raw_payload:
             return error_response(
-                message="User not found. Please restart registration.",
-                errors={"phone_number": ["No user with this phone number."]},
-                status=status.HTTP_404_NOT_FOUND,
+                message="Registration session expired. Please start over.",
+                errors={
+                    "phone_number": ["Session not found. Please re-enter your details."]
+                },
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Consume the OTP so it can't be reused
-        cache.delete(f"otp_{phone_number}")
+        payload = json.loads(raw_payload)
 
-        # ── 3. Issue JWT tokens ───────────────────────────────────────────
+        # ── 3. Create user — only after OTP proves phone ownership ────────
+        # Guard against double-tap / concurrent requests
+        user = UserService.get_user_by_phone(local_number)
+        if not user:
+            user = UserService.create_user(
+                phone_number=payload["local_number"],  # bare local digits
+                country_code=payload["country_code"],  # "+91"
+                first_name=payload["first_name"],
+                last_name=payload.get("last_name", ""),
+                email=payload.get("email"),
+            )
+
+        # ── 4. Consume both cache keys — no replay possible ───────────────
+        cache.delete(f"otp_{local_number}")
+        cache.delete(f"reg_payload_{local_number}")
+
+        # ── 5. Issue JWT tokens ───────────────────────────────────────────
         refresh = RefreshToken.for_user(user)
 
         return success_response(

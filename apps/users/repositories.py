@@ -1,11 +1,42 @@
 from .models import User
+import phonenumbers
+
+
+def normalize_phone(phone_number: str) -> tuple[str, str]:
+    """
+    Accepts any phone number format and returns (local_number, country_code).
+
+    Examples:
+        "+919876543210" -> ("9876543210", "+91")
+        "9876543210"    -> ("9876543210", "")   # no country code to parse
+        "+14155552671"  -> ("4155552671", "+1")
+
+    Always use this helper everywhere a phone number is touched so the
+    format stored in DB and used for cache keys is always consistent.
+    """
+    phone_number = phone_number.strip()
+    try:
+        parsed = phonenumbers.parse(phone_number)
+        local_number = str(parsed.national_number)
+        country_code = f"+{parsed.country_code}"
+        return local_number, country_code
+    except phonenumbers.NumberParseException:
+        # Already a bare local number with no country prefix — return as-is
+        return phone_number, ""
 
 
 class UserRepository:
+
     @staticmethod
     def get_user_by_phone(phone_number: str):
+        """
+        Accepts full E.164 ("+919876543210") or bare local ("9876543210").
+        Always strips the country code before querying, since phone_number
+        is stored as the local number only.
+        """
+        local_number, _ = normalize_phone(phone_number)
         try:
-            return User.objects.get(phone_number=phone_number)
+            return User.objects.get(phone_number=local_number)
         except User.DoesNotExist:
             return None
 
@@ -30,27 +61,17 @@ class UserRepository:
         email: str | None = None,
     ):
         """
-        Persists a new User row.  Password is set to unusable because
-        this platform authenticates exclusively via OTP.
+        Persists a new User row.
 
-        The phone_country_code is parsed from the phone_number prefix so
-        it is stored separately for formatting convenience (matches the
-        model's phone_country_code field).
+        phone_number can be E.164 ("+919876543210") or bare local ("9876543210").
+        The local number is stored in phone_number, country code separately.
+        Password is set to unusable — OTP-only auth platform.
         """
-        # Derive country code from the number — e.g. "+91" from "+919876543210"
-        # Simple heuristic: take everything up to the first digit run > 5 chars.
-        # Adjust if you need stricter parsing (e.g. use the `phonenumbers` library).
-        phone_country_code = ""
-        if phone_number.startswith("+"):
-            # Take the + and up to 3 following digits as the country code
-            digits_only = phone_number[1:]
-            for length in (3, 2, 1):
-                phone_country_code = "+" + digits_only[:length]
-                break  # simplest heuristic — replace with phonenumbers lib if needed
+        local_number, country_code = normalize_phone(phone_number)
 
         user = User(
-            phone_number=phone_number,
-            phone_country_code=phone_country_code,
+            phone_number=local_number,  # "9876543210"
+            phone_country_code=country_code,  # "+91"
             first_name=first_name,
             last_name=last_name,
             email=email or None,

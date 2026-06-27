@@ -280,13 +280,40 @@ class VehicleSearchService:
             # search, not the listing's static total fleet size.
             listing.available_count = max(0, listing.available_count - committed)
 
+        # ── Split VehicleType objects by vendor ───────────────────────
+        # The default grouping puts all vendors' listings for the same
+        # vehicle model under one VehicleType object. We instead want
+        # one VehicleType-like object per (vehicle_type, vendor) pair so
+        # the frontend renders a separate card per vendor.
+        #
+        # We create lightweight proxy objects by copying the VehicleType
+        # and attaching only the listings that belong to a single vendor.
+        # The serializer (VehicleSearchResultSerializer) reads
+        # vt.city_listings, so as long as we set that attribute the
+        # existing serializer works without any changes.
+        from copy import copy
+
+        split_vehicle_types = []
         for vt in vehicle_types:
+            # Group this VehicleType's listings by vendor_id.
+            by_vendor: dict[int, list] = {}
+            for listing in vt.city_listings:
+                by_vendor.setdefault(listing.vendor_id, []).append(listing)
+
+            for vendor_listings in by_vendor.values():
+                vt_copy = copy(vt)
+                vt_copy.city_listings = vendor_listings
+                split_vehicle_types.append(vt_copy)
+
+        # ── Sort: sold-out cards last, same as before ─────────────────
+        for vt in split_vehicle_types:
             vt.city_listings.sort(key=lambda l: l.available_count <= 0)
-        vehicle_types.sort(
+
+        split_vehicle_types.sort(
             key=lambda vt: all(l.available_count <= 0 for l in vt.city_listings)
         )
 
-        return vehicle_types
+        return split_vehicle_types
 
 
 class VehicleDetailService:
