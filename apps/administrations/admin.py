@@ -1,8 +1,12 @@
 from django.contrib import admin
-from django.contrib import admin
 from django.utils.html import format_html
 from apps.core.admin import SoftDeleteAdmin
-from apps.administrations.models import CancellationPolicy, CancellationTier
+from apps.administrations.models import (
+    CancellationPolicy,
+    CancellationTier,
+    Offer,
+    PopularRental,
+)
 
 
 class CancellationTierInline(admin.TabularInline):
@@ -30,3 +34,86 @@ class CancellationPolicyAdmin(SoftDeleteAdmin):
     search_fields = ("name",)
     readonly_fields = ("version", "is_deleted_display")
     inlines = [CancellationTierInline]
+
+
+@admin.register(Offer)
+class OfferAdmin(SoftDeleteAdmin):
+    list_display = (
+        "title",
+        "coupon_code",
+        "discount_amount",
+        "min_order_amount",
+        "is_active",
+        "sort_order",
+        "valid_from",
+        "valid_until",
+        "is_deleted_display",
+    )
+    list_filter = ("is_active", "icon_type")
+    search_fields = ("title", "coupon_code")
+    list_editable = ("sort_order", "is_active")
+    readonly_fields = ("is_deleted_display",)
+    fieldsets = (
+        (
+            "Basic Info",
+            {
+                "fields": (
+                    "title",
+                    "description",
+                    "icon_type",
+                    "sort_order",
+                    "is_active",
+                ),
+            },
+        ),
+        (
+            "Discount",
+            {
+                "fields": ("coupon_code", "discount_amount", "min_order_amount"),
+            },
+        ),
+        (
+            "Validity",
+            {
+                "fields": ("valid_from", "valid_until"),
+            },
+        ),
+    )
+
+
+@admin.register(PopularRental)
+class PopularRentalAdmin(SoftDeleteAdmin):
+    list_display = (
+        "vehicle_type",
+        "city",
+        "display_name",
+        "display_price",
+        "tag",
+        "sort_order",
+        "is_deleted_display",
+    )
+    list_filter = ("city",)
+    search_fields = ("vehicle_type__name", "city__name", "display_name")
+    list_editable = ("sort_order",)
+    readonly_fields = ("is_deleted_display",)
+    fieldsets = (
+        (
+            "Linking",
+            {
+                "fields": ("city", "vehicle_type"),
+            },
+        ),
+        (
+            "Card Overrides",
+            {
+                "fields": ("display_name", "display_price", "display_image", "tag"),
+                "description": "All fields here are optional — each falls back to the linked VehicleType value when left blank.",
+            },
+        ),
+        (
+            "Ordering",
+            {
+                "fields": ("sort_order",),
+            },
+        ),
+    )

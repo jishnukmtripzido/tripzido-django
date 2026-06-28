@@ -39,7 +39,6 @@ CORS_ALLOWED_ORIGINS = [
     "http://192.168.1.4:3000",
     "http://192.168.1.2:3000",
     "https://tripzido-next.vercel.app",
-    "https://3r1df501-3000.inc1.devtunnels.ms",
 ]
 
 CORS_ALLOW_CREDENTIALS = True
@@ -49,7 +48,6 @@ CSRF_TRUSTED_ORIGINS = [
     "http://140.238.243.5:3000",
     "http://localhost:3000",
     "https://tripzido-next.vercel.app",
-    "https://3r1df501-3000.inc1.devtunnels.ms",
 ]
 
 

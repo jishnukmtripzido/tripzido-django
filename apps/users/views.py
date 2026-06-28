@@ -374,11 +374,15 @@ class RegisterVerifyOTPView(APIView):
         phone_number = serializer.validated_data["phone_number"]
         otp = serializer.validated_data["otp"]
 
+        print("i/p phone number and otp from registration", phone_number, otp)
+
         # Normalise — caller may send either format
         local_number, _ = normalize_phone(phone_number)
 
         # ── 1. OTP verification ───────────────────────────────────────────
         cached_otp = cache.get(f"otp_{local_number}")
+
+        print("cached otp reg", cached_otp)
         if cached_otp is None:
             return error_response(
                 message="OTP expired or not found. Please request a new one.",
@@ -387,6 +391,7 @@ class RegisterVerifyOTPView(APIView):
             )
 
         if str(cached_otp) != str(otp):
+            print("otp wrong")
             return error_response(
                 message="Invalid OTP. Please try again.",
                 errors={"otp": ["Incorrect OTP."]},
