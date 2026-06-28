@@ -3,6 +3,7 @@ from django.core.validators import MinValueValidator
 from django.db import models
 from django.db.models import Max
 from apps.core.models import BaseModel
+from apps.locations.models import PickupLocation
 
 User = get_user_model()
 
@@ -165,6 +166,15 @@ class PopularRental(BaseModel):
         "locations.City",
         on_delete=models.CASCADE,
         related_name="popular_rentals",
+    )
+    pickup_location = models.ForeignKey(
+        PickupLocation,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="popular_rentals",
+        help_text="Optional. Pin a specific pickup location for this card. "
+        "Falls back to the vendor's primary location if left blank.",
     )
     vehicle_type = models.ForeignKey(
         "vehicles.VehicleType",

@@ -65,6 +65,8 @@ class PopularRentalSerializer(serializers.Serializer):
     image_url = serializers.SerializerMethodField()
     tag = serializers.CharField()
     sort_order = serializers.IntegerField()
+    pickup_location_id = serializers.SerializerMethodField()  # new
+    pickup_location_name = serializers.SerializerMethodField()  # new
 
     def get_city_id(self, obj):
         return obj.city.id
@@ -100,3 +102,11 @@ class PopularRentalSerializer(serializers.Serializer):
             return None
         request = self.context.get("request")
         return request.build_absolute_uri(image.url) if request else image.url
+
+    def get_pickup_location_id(self, obj) -> int | None:
+        loc = getattr(obj, "resolved_pickup_location", None)
+        return loc.id if loc else None
+
+    def get_pickup_location_name(self, obj) -> str | None:
+        loc = getattr(obj, "resolved_pickup_location", None)
+        return loc.name if loc else None

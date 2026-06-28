@@ -91,6 +91,7 @@ class PopularRentalAdmin(SoftDeleteAdmin):
         "tag",
         "sort_order",
         "is_deleted_display",
+        "pickup_location",
     )
     list_filter = ("city",)
     search_fields = ("vehicle_type__name", "city__name", "display_name")
@@ -100,7 +101,7 @@ class PopularRentalAdmin(SoftDeleteAdmin):
         (
             "Linking",
             {
-                "fields": ("city", "vehicle_type"),
+                "fields": ("city", "vehicle_type", "pickup_location"),
             },
         ),
         (

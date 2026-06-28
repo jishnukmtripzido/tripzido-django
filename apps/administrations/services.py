@@ -83,4 +83,5 @@ class PopularRentalService:
             vt = rental.vehicle_type
             rental.resolved_name = rental.display_name or vt.name
             rental.resolved_image = rental.display_image or vt.primary_image or None
+            rental.resolved_pickup_location = rental.pickup_location
         return rentals

@@ -34,6 +34,6 @@ class PopularRentalRepository:
         """
         return (
             PopularRental.objects.filter(city_id=city_id, is_active=True)
-            .select_related("vehicle_type", "city")
+            .select_related("vehicle_type", "city", "pickup_location")
             .order_by("sort_order", "created_at")
         )
