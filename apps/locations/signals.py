@@ -22,7 +22,7 @@ def revalidate_nextjs_cache(sender, instance, **kwargs):
         url = env("FRONTEND_BASE_URL")
         revalidate_secret = env("REVALIDATE_SECRET")
         requests.post(
-            f"{url}/api/revalidate/get-cities/",
+            f"{url}/api/revalidate/get-cities",
             headers={"x-revalidate-secret": revalidate_secret},
         )
     except Exception as e:
