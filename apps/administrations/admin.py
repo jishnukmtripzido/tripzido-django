@@ -1,12 +1,38 @@
 from django.contrib import admin
 from django.utils.html import format_html
 from apps.core.admin import SoftDeleteAdmin
+from django_summernote.admin import SummernoteModelAdmin
 from apps.administrations.models import (
+    AnnouncementBanner,
     CancellationPolicy,
     CancellationTier,
     Offer,
     PopularRental,
 )
+
+
+@admin.register(AnnouncementBanner)
+class AnnouncementBannerAdmin(SummernoteModelAdmin):
+    summernote_fields = ("content",)
+    list_display = ["page", "is_current", "is_active", "created_at"]
+    list_filter = ["page", "is_current", "is_active"]
+    list_editable = ["is_current"]
+    readonly_fields = ["created_at", "last_updated_at"]
+    fieldsets = (
+        (
+            None,
+            {
+                "fields": ("page", "is_current", "content"),
+            },
+        ),
+        (
+            "Meta",
+            {
+                "fields": ("is_active", "created_at", "last_updated_at"),
+                "classes": ("collapse",),
+            },
+        ),
+    )
 
 
 class CancellationTierInline(admin.TabularInline):

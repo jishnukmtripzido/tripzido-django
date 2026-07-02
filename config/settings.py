@@ -66,6 +66,7 @@ INSTALLED_APPS = [
     "django_filters",
     "corsheaders",
     "django_celery_results",
+    "django_summernote",
     "apps.core",
     "apps.bookings",
     "apps.locations",

@@ -37,3 +37,11 @@ class PopularRentalRepository:
             .select_related("vehicle_type", "city", "pickup_location")
             .order_by("sort_order", "created_at")
         )
+
+
+class AnnouncementBannerRepository:
+    @staticmethod
+    def get_current_for_page(page: str):
+        return AnnouncementBanner.objects.filter(
+            page=page, is_current=True, is_active=True
+        ).first()

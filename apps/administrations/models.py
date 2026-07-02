@@ -212,3 +212,54 @@ class PopularRental(BaseModel):
 
     def __str__(self):
         return f"{self.vehicle_type} — {self.city.name}"
+
+
+class AnnouncementBanner(BaseModel):
+    """
+    Page-specific announcement banner shown at the top of a page.
+    Only one banner per page can be current (is_current=True).
+    Content is rich HTML — bold, links, etc — sized by frontend Tailwind classes.
+    """
+
+    class Page(models.TextChoices):
+        SEARCH_RESULT = "search_result", "Search Result Page"
+        VEHICLE_DETAIL = "vehicle_detail", "Vehicle Detail Page"
+        HOME = "home", "Home Page"
+
+    content = models.TextField(
+        help_text="Rich HTML content. Use the editor to add bold, links, etc. "
+        "Font size is controlled by the frontend."
+    )
+    page = models.CharField(
+        max_length=50,
+        choices=Page.choices,
+        db_index=True,
+        help_text="Which page this banner appears on.",
+    )
+    is_current = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text="Only one banner per page can be current at a time.",
+    )
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["page"],
+                condition=models.Q(is_current=True, is_active=True),
+                name="unique_current_active_banner_per_page",
+            )
+        ]
+
+    def save(self, *args, **kwargs):
+        # when setting a banner as current, unset all others for that page
+        if self.is_current:
+            AnnouncementBanner.objects.filter(page=self.page, is_current=True).exclude(
+                pk=self.pk
+            ).update(is_current=False)
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        status = "current" if self.is_current else "inactive"
+        return f"Banner [{self.get_page_display()}] ({status})"

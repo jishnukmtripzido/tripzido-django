@@ -1,4 +1,5 @@
 from apps.administrations.repositories import (
+    AnnouncementBannerRepository,
     CancellationPolicyRepository,
     OfferRepository,
     PopularRentalRepository,
@@ -85,3 +86,9 @@ class PopularRentalService:
             rental.resolved_image = rental.display_image or vt.primary_image or None
             rental.resolved_pickup_location = rental.pickup_location
         return rentals
+
+
+class AnnouncementBannerService:
+    @staticmethod
+    def get_current_banner(page: str):
+        return AnnouncementBannerRepository.get_current_for_page(page)

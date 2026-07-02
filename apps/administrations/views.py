@@ -9,12 +9,15 @@ from apps.administrations.services import (
     CancellationPolicyService,
     OfferService,
     PopularRentalService,
+    AnnouncementBannerService,
 )
 from apps.administrations.serializers import (
     CancellationPolicySerializer,
     OfferSerializer,
     PopularRentalSerializer,
     PopularRentalQuerySerializer,
+    AnnouncementBannerSerializer,
+    AnnouncementBannerQuerySerializer,
 )
 from apps.core.responses import success_response, error_response
 
@@ -118,6 +121,62 @@ class PopularRentalListView(GenericAPIView):
         except Exception as e:
             return error_response(
                 message="Failed to retrieve popular rentals",
+                errors=str(e),
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class AnnouncementBannerView(GenericAPIView):
+    """
+    GET /api/administrations/announcement-banner/?page=search_result
+
+    Returns the current active announcement banner for the given page,
+    or null if none is set.
+    """
+
+    permission_classes = [AllowAny]
+    serializer_class = AnnouncementBannerSerializer
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name="page",
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                required=True,
+                description="Page identifier: search_result | vehicle_detail | home",
+            ),
+        ],
+        responses=AnnouncementBannerSerializer,
+    )
+    def get(self, request):
+        query_serializer = AnnouncementBannerQuerySerializer(data=request.query_params)
+        if not query_serializer.is_valid():
+            return error_response(
+                message="Invalid parameters",
+                errors=query_serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        page = query_serializer.validated_data["page"]
+
+        try:
+            banner = AnnouncementBannerService.get_current_banner(page)
+            if banner is None:
+                return success_response(
+                    data=None,
+                    message="No active banner for this page",
+                    status=status.HTTP_200_OK,
+                )
+            serializer = AnnouncementBannerSerializer(banner)
+            return success_response(
+                data=serializer.data,
+                message="Banner retrieved successfully",
+                status=status.HTTP_200_OK,
+            )
+        except Exception as e:
+            return error_response(
+                message="Failed to retrieve banner",
                 errors=str(e),
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )

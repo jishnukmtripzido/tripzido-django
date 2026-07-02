@@ -110,3 +110,14 @@ class PopularRentalSerializer(serializers.Serializer):
     def get_pickup_location_name(self, obj) -> str | None:
         loc = getattr(obj, "resolved_pickup_location", None)
         return loc.name if loc else None
+
+
+class AnnouncementBannerQuerySerializer(serializers.Serializer):
+    page = serializers.ChoiceField(choices=["search_result", "vehicle_detail", "home"])
+
+
+class AnnouncementBannerSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    content = serializers.CharField()
+    page = serializers.CharField()
+    is_current = serializers.BooleanField()
