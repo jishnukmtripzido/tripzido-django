@@ -1,4 +1,9 @@
-from apps.administrations.models import CancellationPolicy, Offer, PopularRental
+from apps.administrations.models import (
+    CancellationPolicy,
+    Offer,
+    PopularRental,
+    AnnouncementBanner,
+)
 
 
 class CancellationPolicyRepository:
