@@ -1039,12 +1039,38 @@ class VehicleSearchService:
                 split_vehicle_types.append(vt_copy)
 
         # ── Sort: sold-out cards last, same as before ─────────────────
-        for vt in split_vehicle_types:
-            vt.city_listings.sort(key=lambda l: l.available_count <= 0)
+        # for vt in split_vehicle_types:
+        #     vt.city_listings.sort(key=lambda l: l.available_count <= 0)
 
-        split_vehicle_types.sort(
-            key=lambda vt: all(l.available_count <= 0 for l in vt.city_listings)
-        )
+        # split_vehicle_types.sort(
+        #     key=lambda vt: all(l.available_count <= 0 for l in vt.city_listings)
+        # )
+
+        # ── Sort listings within each card: cheapest-available first, sold-out last ──
+        for vt in split_vehicle_types:
+            vt.city_listings.sort(
+                key=lambda l: (
+                    l.available_count <= 0,
+                    (
+                        l.matched_package.price * l.matched_package.matched_multiplier
+                        if l.available_count > 0
+                        else Decimal("0")
+                    ),
+                )
+            )
+
+        # ── Sort cards: all-sold-out last, then cheapest-available-price first ──
+        def _card_sort_key(vt):
+            available = [l for l in vt.city_listings if l.available_count > 0]
+            if not available:
+                return (1, Decimal("0"))
+            cheapest = min(
+                l.matched_package.price * l.matched_package.matched_multiplier
+                for l in available
+            )
+            return (0, cheapest)
+
+        split_vehicle_types.sort(key=_card_sort_key)
 
         return split_vehicle_types
 
