@@ -14,6 +14,7 @@ from apps.bookings.models import Booking
 from apps.bookings.repositories import BookingRepository, BookingCancellationRepository
 from apps.administrations.repositories import CancellationPolicyRepository
 from apps.administrations.services import CancellationPolicyService
+from apps.administrations.models import CancellationTier
 
 
 def _generate_booking_reference() -> str:
@@ -357,16 +358,15 @@ class CancellationService:
         return max(hours, Decimal("0")).quantize(Decimal("0.01"))
 
     @staticmethod
-    def _match_tier(policy, hours_before_pickup: Decimal):
+    def _match_tier(policy, payment_mode: str, hours_before_pickup: Decimal):
         """
-        Finds the administrations.CancellationTier whose
-        [min_hours_before_pickup, max_hours_before_pickup) range
-        contains hours_before_pickup. Tiers are expected to tile the
-        timeline without gaps/overlaps (e.g. 0-24, 24-48, 48+) — that's
-        an admin-configuration concern, not enforced here. Returns None
-        if no tier matches (e.g. an incompletely configured policy).
+        Same range-matching as before, now scoped to the tiers belonging
+        to `payment_mode`. FULL and PARTIAL schedules are independent —
+        a booking never matches a tier from the other schedule.
         """
         for tier in policy.tiers.all():
+            if tier.payment_mode != payment_mode:
+                continue
             lower = Decimal(tier.min_hours_before_pickup)
             upper = (
                 Decimal(tier.max_hours_before_pickup)
@@ -380,24 +380,28 @@ class CancellationService:
         return None
 
     @staticmethod
-    def _resolve_refund_percentage(booking) -> tuple[Decimal, dict]:
+    def _tier_payment_mode(booking) -> str:
         """
-        Shared by cancel_booking and preview_cancellation: looks up the
-        current policy via administrations.CancellationPolicyRepository,
-        matches a tier by hours-until-pickup, and returns
-        (refund_percentage, meta) where meta carries the policy_version
-        and hours figure needed for the BookingCancellation snapshot /
-        preview response.
+        Maps Booking.PaymentMode -> CancellationTier.PaymentMode.
+        PARTIAL bookings use the partial schedule (100% forfeiture per
+        current policy). FULL and PAY_AT_PICKUP both use the full-payment
+        schedule — PAY_AT_PICKUP shouldn't normally reach cancellation
+        with money collected, but if it does, FULL is the safer default.
+        """
+        if booking.payment_mode == Booking.PaymentMode.PARTIAL:
+            return CancellationTier.PaymentMode.PARTIAL
+        return CancellationTier.PaymentMode.FULL
 
-        Fails safe to 0% refund if no policy is configured at all, or
-        if no tier matches the exact timing — never silently grants a
-        full refund nobody approved.
-        """
+    @staticmethod
+    def _resolve_refund_percentage(booking) -> tuple[Decimal, dict]:
         policy = CancellationPolicyRepository.get_current()
         hours_before_pickup = CancellationService._hours_until_pickup(booking)
+        tier_payment_mode = CancellationService._tier_payment_mode(booking)
 
         tier = (
-            CancellationService._match_tier(policy, hours_before_pickup)
+            CancellationService._match_tier(
+                policy, tier_payment_mode, hours_before_pickup
+            )
             if policy
             else None
         )
@@ -477,17 +481,6 @@ class CancellationService:
 
     @staticmethod
     def preview_cancellation(booking) -> tuple[dict | None, str | None]:
-        """
-        Read-only version of the refund math in cancel_booking, used to
-        show the customer "you'll get ₹X back" before they confirm.
-        Does not create any records or change booking state.
-
-        Also includes the full policy schedule (every tier's label /
-        description / refund_percentage, via
-        CancellationPolicyService.get_current_policy()) so the frontend
-        can show the whole refund timeline, not just the customer's one
-        matched outcome.
-        """
         allowed, error = CancellationService.can_cancel(booking)
         if not allowed:
             return None, error
@@ -505,11 +498,17 @@ class CancellationService:
         policy_info = CancellationPolicyService.get_current_policy()
 
         return {
+            "payment_mode": booking.payment_mode,
             "hours_before_pickup": float(meta["hours_before_pickup"]),
             "refund_percentage": float(refund_percentage),
             "paid_amount": float(paid_amount),
             "refundable_amount": float(refundable_amount),
             "forfeited_amount": float(forfeited_amount),
-            "policy_rules": policy_info["rules"] if policy_info else [],
+            "full_payment_rules": (
+                policy_info["full_payment_rules"] if policy_info else []
+            ),
+            "partial_payment_rules": (
+                policy_info["partial_payment_rules"] if policy_info else []
+            ),
             "policy_note": policy_info["note"] if policy_info else "",
         }, None

@@ -4,6 +4,7 @@ from django.db import models
 from django.db.models import Max
 from apps.core.models import BaseModel
 from apps.locations.models import PickupLocation
+from django.core.exceptions import ValidationError
 
 User = get_user_model()
 
@@ -49,8 +50,20 @@ class CancellationPolicy(BaseModel):
 
 
 class CancellationTier(BaseModel):
+
+    class PaymentMode(models.TextChoices):
+        FULL = "FULL", "Full Payment"
+        PARTIAL = "PARTIAL", "Partial Payment"
+
     policy = models.ForeignKey(
         CancellationPolicy, on_delete=models.CASCADE, related_name="tiers"
+    )
+    payment_mode = models.CharField(
+        max_length=10,
+        choices=PaymentMode.choices,
+        default=PaymentMode.FULL,
+        db_index=True,
+        help_text="Which payment mode's refund schedule this tier belongs to.",
     )
     min_hours_before_pickup = models.PositiveIntegerField(
         help_text="Hours before pickup time (lower bound of this tier)"
@@ -65,22 +78,64 @@ class CancellationTier(BaseModel):
         help_text="0 = full forfeiture, 100 = full refund",
     )
     label = models.CharField(
-        max_length=150,
-        blank=True,
-        help_text="e.g. 'More than 48 hours before pickup'. Auto-generated if left blank.",
+        max_length=150, blank=True, help_text="Auto-generated if left blank."
     )
     description = models.CharField(
-        max_length=300,
-        blank=True,
-        help_text="e.g. 'Full refund of advance payment.' Auto-generated if left blank.",
+        max_length=300, blank=True, help_text="Auto-generated if left blank."
     )
 
     class Meta:
-        ordering = ["-min_hours_before_pickup"]
+        ordering = ["payment_mode", "-min_hours_before_pickup"]
+        constraints = [
+            # Prevents two tiers in the same policy+payment_mode from
+            # starting at the exact same hour boundary. Doesn't catch
+            # partial overlaps (e.g. 0-30 and 24-48) — that's handled
+            # by clean()/the admin formset, since it needs to compare
+            # against sibling rows, not just column values.
+            models.UniqueConstraint(
+                fields=["policy", "payment_mode", "min_hours_before_pickup"],
+                name="unique_tier_start_per_policy_mode",
+            )
+        ]
+
+    def clean(self):
+        super().clean()
+        if (
+            self.max_hours_before_pickup is not None
+            and self.max_hours_before_pickup <= self.min_hours_before_pickup
+        ):
+            raise ValidationError(
+                "max_hours_before_pickup must be greater than min_hours_before_pickup."
+            )
+
+        if self.policy_id is None:
+            return
+
+        siblings = CancellationTier.objects.filter(
+            policy_id=self.policy_id, payment_mode=self.payment_mode
+        )
+        if self.pk:
+            siblings = siblings.exclude(pk=self.pk)
+
+        lo = self.min_hours_before_pickup
+        hi = self.max_hours_before_pickup  # None = infinity
+
+        for other in siblings:
+            o_lo = other.min_hours_before_pickup
+            o_hi = other.max_hours_before_pickup
+
+            # Two half-open ranges [lo, hi) and [o_lo, o_hi) overlap iff
+            # lo < o_hi (or o_hi is None) and o_lo < hi (or hi is None).
+            overlaps = (o_hi is None or lo < o_hi) and (hi is None or o_lo < hi)
+            if overlaps:
+                raise ValidationError(
+                    f"This tier's range overlaps an existing {self.payment_mode} "
+                    f"tier ({o_lo}–{o_hi or '∞'} hrs) on this policy."
+                )
 
     def __str__(self):
         return (
-            f"Tier({self.policy}) "
+            f"Tier({self.policy}) [{self.payment_mode}] "
             f"{self.min_hours_before_pickup}–{self.max_hours_before_pickup or '∞'} hrs "
             f"→ {self.refund_percentage}% refund"
         )

@@ -4,6 +4,7 @@ from apps.administrations.repositories import (
     OfferRepository,
     PopularRentalRepository,
 )
+from apps.administrations.models import CancellationTier
 
 
 class CancellationPolicyService:
@@ -25,19 +26,16 @@ class CancellationPolicyService:
         return f"{refund}% refund of advance payment."
 
     @staticmethod
-    def get_current_policy() -> dict | None:
-        policy = CancellationPolicyRepository.get_current()
-        if policy is None:
-            return None
-
-        tiers = sorted(policy.tiers.all(), key=lambda t: -t.min_hours_before_pickup)
-
+    def _build_rules(policy, payment_mode: str) -> list[dict]:
+        tiers = sorted(
+            (t for t in policy.tiers.all() if t.payment_mode == payment_mode),
+            key=lambda t: -t.min_hours_before_pickup,
+        )
         rules = []
         for tier in tiers:
             min_h = tier.min_hours_before_pickup
             max_h = tier.max_hours_before_pickup
             refund = int(tier.refund_percentage)
-
             rules.append(
                 {
                     "hours_before_pickup": min_h,
@@ -48,9 +46,21 @@ class CancellationPolicyService:
                     or CancellationPolicyService._auto_description(refund),
                 }
             )
+        return rules
+
+    @staticmethod
+    def get_current_policy() -> dict | None:
+        policy = CancellationPolicyRepository.get_current()
+        if policy is None:
+            return None
 
         return {
-            "rules": rules,
+            "full_payment_rules": CancellationPolicyService._build_rules(
+                policy, CancellationTier.PaymentMode.FULL
+            ),
+            "partial_payment_rules": CancellationPolicyService._build_rules(
+                policy, CancellationTier.PaymentMode.PARTIAL
+            ),
             "note": policy.refund_note,
         }
 

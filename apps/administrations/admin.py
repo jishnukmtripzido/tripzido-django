@@ -1,4 +1,6 @@
+from django import forms
 from django.contrib import admin
+from django.core.exceptions import ValidationError
 from django.utils.html import format_html
 from apps.core.admin import SoftDeleteAdmin
 from django_summernote.admin import SummernoteModelAdmin
@@ -19,12 +21,7 @@ class AnnouncementBannerAdmin(SummernoteModelAdmin):
     list_editable = ["is_current"]
     readonly_fields = ["created_at", "last_updated_at"]
     fieldsets = (
-        (
-            None,
-            {
-                "fields": ("page", "is_current", "content"),
-            },
-        ),
+        (None, {"fields": ("page", "is_current", "content")}),
         (
             "Meta",
             {
@@ -35,10 +32,60 @@ class AnnouncementBannerAdmin(SummernoteModelAdmin):
     )
 
 
+class CancellationTierInlineFormSet(forms.BaseInlineFormSet):
+    """
+    Validates across all tier rows submitted together for one policy:
+    - no two rows in the same payment_mode overlap in their hour range
+    - max_hours_before_pickup (if set) must be greater than min
+    Runs in addition to the model's own clean(), which only catches
+    overlaps against rows already saved in the DB — this catches
+    overlaps between rows being added in the same admin submission.
+    """
+
+    def clean(self):
+        super().clean()
+
+        by_mode: dict[str, list[tuple[int, int | None, int]]] = {}
+        for idx, form in enumerate(self.forms):
+            if not hasattr(form, "cleaned_data") or not form.cleaned_data:
+                continue
+            if form.cleaned_data.get("DELETE"):
+                continue
+
+            mode = form.cleaned_data.get("payment_mode")
+            lo = form.cleaned_data.get("min_hours_before_pickup")
+            hi = form.cleaned_data.get("max_hours_before_pickup")
+            if mode is None or lo is None:
+                continue
+
+            if hi is not None and hi <= lo:
+                form.add_error(
+                    "max_hours_before_pickup",
+                    "Must be greater than min_hours_before_pickup.",
+                )
+                continue
+
+            by_mode.setdefault(mode, []).append((lo, hi, idx))
+
+        for mode, ranges in by_mode.items():
+            ranges.sort(key=lambda r: r[0])
+            for i in range(len(ranges) - 1):
+                lo, hi, _ = ranges[i]
+                next_lo, _next_hi, next_idx = ranges[i + 1]
+                if hi is None or next_lo < hi:
+                    self.forms[next_idx].add_error(
+                        "min_hours_before_pickup",
+                        f"Overlaps another {mode} tier "
+                        f"({lo}–{hi if hi is not None else '∞'} hrs).",
+                    )
+
+
 class CancellationTierInline(admin.TabularInline):
     model = CancellationTier
+    formset = CancellationTierInlineFormSet
     extra = 1
     fields = (
+        "payment_mode",
         "min_hours_before_pickup",
         "max_hours_before_pickup",
         "refund_percentage",
@@ -89,21 +136,14 @@ class OfferAdmin(SoftDeleteAdmin):
                     "icon_type",
                     "sort_order",
                     "is_active",
-                ),
+                )
             },
         ),
         (
             "Discount",
-            {
-                "fields": ("coupon_code", "discount_amount", "min_order_amount"),
-            },
+            {"fields": ("coupon_code", "discount_amount", "min_order_amount")},
         ),
-        (
-            "Validity",
-            {
-                "fields": ("valid_from", "valid_until"),
-            },
-        ),
+        ("Validity", {"fields": ("valid_from", "valid_until")}),
     )
 
 
@@ -124,12 +164,7 @@ class PopularRentalAdmin(SoftDeleteAdmin):
     list_editable = ("sort_order",)
     readonly_fields = ("is_deleted_display",)
     fieldsets = (
-        (
-            "Linking",
-            {
-                "fields": ("city", "vehicle_type", "pickup_location"),
-            },
-        ),
+        ("Linking", {"fields": ("city", "vehicle_type", "pickup_location")}),
         (
             "Card Overrides",
             {
@@ -137,10 +172,5 @@ class PopularRentalAdmin(SoftDeleteAdmin):
                 "description": "All fields here are optional — each falls back to the linked VehicleType value when left blank.",
             },
         ),
-        (
-            "Ordering",
-            {
-                "fields": ("sort_order",),
-            },
-        ),
+        ("Ordering", {"fields": ("sort_order",)}),
     )

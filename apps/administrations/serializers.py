@@ -11,7 +11,8 @@ class CancellationTierSerializer(serializers.Serializer):
 
 
 class CancellationPolicySerializer(serializers.Serializer):
-    rules = CancellationTierSerializer(many=True)
+    full_payment_rules = CancellationTierSerializer(many=True)
+    partial_payment_rules = CancellationTierSerializer(many=True)
     note = serializers.CharField()
 
 

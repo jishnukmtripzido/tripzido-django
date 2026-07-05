@@ -3,7 +3,13 @@ import requests
 import environ
 from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
-from .models import Offer, PopularRental, AnnouncementBanner
+from .models import (
+    Offer,
+    PopularRental,
+    AnnouncementBanner,
+    CancellationPolicy,
+    CancellationTier,
+)
 
 env = environ.Env()
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -39,3 +45,15 @@ def revalidate_popular_rentals(sender, instance, **kwargs):
 @receiver(post_delete, sender=AnnouncementBanner)
 def revalidate_announcement_banner(sender, instance, **kwargs):
     _revalidate("get-announcement-banner")
+
+
+@receiver(post_save, sender=CancellationPolicy)
+@receiver(post_delete, sender=CancellationPolicy)
+def revalidate_cancellation_policy(sender, instance, **kwargs):
+    _revalidate("get-cancellation-policy")
+
+
+@receiver(post_save, sender=CancellationTier)
+@receiver(post_delete, sender=CancellationTier)
+def revalidate_cancellation_tier(sender, instance, **kwargs):
+    _revalidate("get-cancellation-policy")

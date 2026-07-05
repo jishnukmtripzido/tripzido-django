@@ -123,12 +123,14 @@ class CancellationPolicyRuleSerializer(serializers.Serializer):
 class CancellationPreviewSerializer(serializers.Serializer):
     """Response shape for GET /api/bookings/{id}/cancellation-preview/."""
 
+    payment_mode = serializers.CharField()
     hours_before_pickup = serializers.FloatField()
     refund_percentage = serializers.FloatField()
     paid_amount = serializers.FloatField()
     refundable_amount = serializers.FloatField()
     forfeited_amount = serializers.FloatField()
-    policy_rules = CancellationPolicyRuleSerializer(many=True)
+    full_payment_rules = CancellationPolicyRuleSerializer(many=True)
+    partial_payment_rules = CancellationPolicyRuleSerializer(many=True)
     policy_note = serializers.CharField(allow_blank=True)
 
 
