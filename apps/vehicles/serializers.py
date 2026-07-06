@@ -368,3 +368,15 @@ class CheckoutSummarySerializer(serializers.Serializer):
     duration_label = serializers.CharField()
     pickup_location_name = serializers.CharField()
     things_to_remember = ThingsToRememberSerializer()
+
+
+class LocationTimingDaySerializer(serializers.Serializer):
+    day_of_week = serializers.IntegerField()
+    day_name = serializers.CharField()
+    is_closed = serializers.BooleanField()
+    timing = serializers.CharField()
+
+
+class LocationTimingSerializer(serializers.Serializer):
+    has_schedule = serializers.BooleanField()
+    days = LocationTimingDaySerializer(many=True)

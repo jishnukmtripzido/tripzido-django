@@ -1,5 +1,6 @@
 from django.urls import path
 from apps.vehicles.views import (
+    LocationTimingView,
     VehicleDetailView,
     VehicleSearchView,
     VehicleReviewsView,
@@ -18,5 +19,10 @@ urlpatterns = [
         "<int:listing_id>/reviews/",
         VehicleReviewsView.as_view(),
         name="vehicle-listing-reviews",
+    ),
+    path(
+        "<int:listing_id>/location-timing/",
+        LocationTimingView.as_view(),
+        name="vehicle-location-timing",
     ),
 ]

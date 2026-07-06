@@ -374,3 +374,31 @@ class VehicleReviewRepository:
         if limit is not None:
             queryset = queryset[:limit]
         return queryset
+
+
+class LocationTimingRepository:
+
+    @staticmethod
+    def get_schedule_for_listing(listing_id: int) -> tuple[bool, dict]:
+        """
+        Returns (has_template, days) for the listing's assigned
+        schedule template.
+
+        has_template=False means the listing has no schedule_template
+        assigned at all — callers should treat this as "nothing to
+        show", not as "closed every day". That distinction is the
+        whole point of returning a bool instead of just an empty dict.
+        """
+        template_id = (
+            VehicleListing.objects.filter(id=listing_id)
+            .values_list("schedule_template_id", flat=True)
+            .first()
+        )
+        if template_id is None:
+            return False, {}
+
+        days = {
+            d.day_of_week: d
+            for d in TemplateScheduleDay.objects.filter(template_id=template_id)
+        }
+        return True, days

@@ -11,12 +11,14 @@ from apps.vehicles.serializers import (
     VehicleDetailSerializer,
     CheckoutSummaryQuerySerializer,
     CheckoutSummarySerializer,
+    LocationTimingSerializer,
 )
 from apps.vehicles.services import (
     VehicleSearchService,
     VehicleReviewService,
     VehicleReviewService,
     VehicleDetailService,
+    LocationTimingService,
 )
 from apps.core.responses import success_response, error_response
 from drf_spectacular.utils import extend_schema, OpenApiParameter
@@ -284,5 +286,37 @@ class CheckoutSummaryView(GenericAPIView):
         return success_response(
             data=serializer.data,
             message="Checkout summary retrieved successfully",
+            status=status.HTTP_200_OK,
+        )
+
+
+class LocationTimingView(GenericAPIView):
+    permission_classes = [AllowAny]
+    serializer_class = LocationTimingSerializer
+
+    @extend_schema(responses=LocationTimingSerializer)
+    def get(self, request, listing_id: int):
+        try:
+            data = LocationTimingService.get_location_timing(listing_id)
+        except Exception as e:
+            return error_response(
+                message="Failed to retrieve location timing",
+                errors=str(e),
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        if data is None:
+            # No schedule template assigned — frontend treats null as
+            # "don't render this section".
+            return success_response(
+                data=None,
+                message="No schedule configured for this listing",
+                status=status.HTTP_200_OK,
+            )
+
+        serializer = LocationTimingSerializer(data)
+        return success_response(
+            data=serializer.data,
+            message="Location timing retrieved successfully",
             status=status.HTTP_200_OK,
         )
