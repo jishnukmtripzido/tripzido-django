@@ -3,8 +3,12 @@ from apps.administrations.repositories import (
     CancellationPolicyRepository,
     OfferRepository,
     PopularRentalRepository,
+    PlatformConfigRepository,
 )
 from apps.administrations.models import CancellationTier
+import json
+from decimal import Decimal, InvalidOperation
+from django.core.cache import cache
 
 
 class CancellationPolicyService:
@@ -102,3 +106,68 @@ class AnnouncementBannerService:
     @staticmethod
     def get_current_banner(page: str):
         return AnnouncementBannerRepository.get_current_for_page(page)
+
+
+class PlatformConfigService:
+    """
+    Typed accessor for PlatformConfig. Every getter falls back to the
+    given default if the key doesn't exist, or if the stored value
+    can't be parsed as the requested type (e.g. an admin fat-fingers a
+    non-numeric string into an INTEGER-typed key) — a bad config value
+    should never take checkout down, it should just silently fall back.
+    """
+
+    @staticmethod
+    def get_int(key: str, default: int) -> int:
+        config = PlatformConfigRepository.get_by_key(key)
+        if config is None:
+            return default
+        try:
+            return int(config.value)
+        except (TypeError, ValueError):
+            return default
+
+    # @staticmethod
+    # def get_int(key: str, default: int) -> int:
+    #     cache_key = f"platform_config:{key}"
+    #     cached = cache.get(cache_key)
+    #     if cached is not None:
+    #         return cached
+    #     config = PlatformConfigRepository.get_by_key(key)
+    #     value = int(config.value) if config else default
+    #     cache.set(
+    #         cache_key, value, timeout=300
+    #     )  # 5 min TTL — admin changes propagate within 5 min
+    #     return value
+
+    @staticmethod
+    def get_decimal(key: str, default: Decimal) -> Decimal:
+        config = PlatformConfigRepository.get_by_key(key)
+        if config is None:
+            return default
+        try:
+            return Decimal(config.value)
+        except (TypeError, ValueError, InvalidOperation):
+            return default
+
+    @staticmethod
+    def get_bool(key: str, default: bool) -> bool:
+        config = PlatformConfigRepository.get_by_key(key)
+        if config is None:
+            return default
+        return config.value.strip().lower() in ("true", "1", "yes")
+
+    @staticmethod
+    def get_str(key: str, default: str) -> str:
+        config = PlatformConfigRepository.get_by_key(key)
+        return config.value if config is not None else default
+
+    @staticmethod
+    def get_json(key: str, default):
+        config = PlatformConfigRepository.get_by_key(key)
+        if config is None:
+            return default
+        try:
+            return json.loads(config.value)
+        except (TypeError, ValueError):
+            return default

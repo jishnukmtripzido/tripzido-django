@@ -13,20 +13,104 @@ from django.conf import settings
 from apps.bookings.models import Booking
 from apps.bookings.repositories import BookingRepository, BookingCancellationRepository
 from apps.administrations.repositories import CancellationPolicyRepository
-from apps.administrations.services import CancellationPolicyService
+from apps.administrations.services import (
+    CancellationPolicyService,
+    PlatformConfigService,
+)
 from apps.administrations.models import CancellationTier
+from apps.administrations.models import CustomerTCAcceptance
+from apps.administrations.models import LegalDocument
+from apps.administrations.repositories import LegalDocumentRepository
+from apps.administrations.models import CancellationPolicy  # for type clarity only
 
 
 def _generate_booking_reference() -> str:
     return "TRZ" + secrets.token_hex(4).upper()
 
 
+def _generate_unique_booking_reference(max_attempts: int = 5) -> str:
+    """
+    Retries a few times on the rare chance _generate_booking_reference()
+    collides with an existing row. Raises if it still can't find a free
+    one after max_attempts — at that point something is wrong (e.g. the
+    random space is exhausted, which shouldn't realistically happen at
+    2^32 combinations, or there's a deeper DB issue).
+    """
+    for _ in range(max_attempts):
+        candidate = _generate_booking_reference()
+        if not Booking.objects.filter(booking_reference=candidate).exists():
+            return candidate
+    raise RuntimeError(
+        "Could not generate a unique booking reference after "
+        f"{max_attempts} attempts."
+    )
+
+
 def _generate_order_id() -> str:
-    # Cashfree order ids are alphanumeric + _ / - ; keep it short and safe.
     return "bk_" + uuid.uuid4().hex[:20]
 
 
 class BookingCheckoutService:
+
+    @staticmethod
+    def _build_cancellation_snapshot(policy) -> dict:
+        """
+        Freezes the raw tier ranges for BOTH payment-mode schedules
+        (FULL and PARTIAL) — not filtered to the booking's own mode —
+        so _resolve_refund_percentage can later re-run the exact same
+        range-matching logic against frozen data. Returns {} if there's
+        no current policy at all.
+        """
+        if policy is None:
+            return {}
+
+        tiers = []
+        for tier in policy.tiers.all():
+            tiers.append(
+                {
+                    "payment_mode": tier.payment_mode,
+                    "min_hours_before_pickup": tier.min_hours_before_pickup,
+                    "max_hours_before_pickup": tier.max_hours_before_pickup,
+                    "refund_percentage": str(tier.refund_percentage),
+                }
+            )
+
+        return {
+            "policy_version": policy.version,
+            "policy_note": policy.refund_note,
+            "tiers": tiers,
+        }
+
+    @staticmethod
+    def _build_vendor_terms_snapshot(vendor_terms) -> dict:
+        """
+        Freezes the vendor terms content itself (not just the FK) —
+        belt-and-suspenders in case VendorTerms is ever mutated via a
+        queryset .update() that bypasses save()'s versioning logic.
+        """
+        if vendor_terms is None:
+            return {}
+
+        return {
+            "version": vendor_terms.version,
+            "terms_items": vendor_terms.terms_items,
+            "security_deposit_note": vendor_terms.security_deposit_note,
+            "operating_hours_note": vendor_terms.operating_hours_note,
+            "distance_limit_note": vendor_terms.distance_limit_note,
+            "excess_charge_note": vendor_terms.excess_charge_note,
+            "late_penalty_note": vendor_terms.late_penalty_note,
+        }
+
+    @staticmethod
+    def _build_platform_tc_snapshot(legal_doc) -> dict:
+        """Freezes platform T&C content itself, same reasoning as above."""
+        if legal_doc is None:
+            return {}
+
+        return {
+            "version": legal_doc.version,
+            "content": legal_doc.content,
+        }
 
     @staticmethod
     @transaction.atomic
@@ -39,6 +123,7 @@ class BookingCheckoutService:
         quantity: int,
         payment_mode: str,
         return_url: str,
+        ip_address: str | None = None,
     ) -> tuple[dict | None, str | None]:
         """
         Validates availability/pricing, creates N Booking rows (one per
@@ -102,14 +187,37 @@ class BookingCheckoutService:
         ).quantize(Decimal("0.01"))
         unit_net = unit_rent_amount - unit_commission
 
-        terms = VehicleDetailService._get_current_terms(listing)
+        vendor_terms = VehicleDetailService._get_current_terms(listing)
+        vendor_terms_snapshot = BookingCheckoutService._build_vendor_terms_snapshot(
+            vendor_terms
+        )
+
+        # ── Platform T&C: fetch current LegalDocument, record acceptance ──
+        platform_tc_doc = LegalDocumentRepository.get_current(
+            LegalDocument.DocType.PLATFORM_TC
+        )
+        platform_tc_snapshot = BookingCheckoutService._build_platform_tc_snapshot(
+            platform_tc_doc
+        )
+        if platform_tc_doc is not None:
+            CustomerTCAcceptance.objects.get_or_create(
+                user=customer,
+                legal_document=platform_tc_doc,
+                defaults={"ip_address": ip_address},
+            )
+
+        # ── Cancellation policy snapshot, frozen at booking time ──
+        current_cancellation_policy = CancellationPolicyRepository.get_current()
+        cancellation_snapshot = BookingCheckoutService._build_cancellation_snapshot(
+            current_cancellation_policy
+        )
 
         group_id = uuid.uuid4()
         bookings = []
         for _ in range(quantity):
             booking = Booking.objects.create(
                 booking_group_id=group_id,
-                booking_reference=_generate_booking_reference(),
+                booking_reference=_generate_unique_booking_reference(),
                 customer=customer,
                 listing=listing,
                 pickup_location=listing.pickup_location,
@@ -134,12 +242,19 @@ class BookingCheckoutService:
                 payment_mode=effective_mode,
                 advance_amount=unit_advance,
                 remaining_amount=unit_remaining,
-                platform_tc_version=settings.PLATFORM_TC_VERSION,
-                vendor_terms_version=terms,
+                platform_tc_document=platform_tc_doc,
+                platform_tc_snapshot=platform_tc_snapshot,
+                vendor_terms_version=vendor_terms,
+                vendor_terms_snapshot=vendor_terms_snapshot,
                 tc_accepted_at=timezone.now(),
-                cancellation_policy_snapshot={},
+                cancellation_policy_snapshot=cancellation_snapshot,
                 status=Booking.Status.PENDING_PAYMENT,
-                expires_at=timezone.now() + timedelta(minutes=15),
+                expires_at=timezone.now()
+                + timedelta(
+                    minutes=PlatformConfigService.get_int(
+                        "PENDING_BOOKING_EXPIRY_MINUTES", default=15
+                    )
+                ),
             )
             bookings.append(booking)
 
@@ -192,11 +307,6 @@ class BookingCheckoutService:
     @staticmethod
     @transaction.atomic
     def confirm_payment_success(order_id: str, gateway_payload: dict) -> bool:
-        """
-        Idempotent: returns True if this call (or a prior one) already
-        confirmed this order, False if the order_id wasn't found at all.
-        Used by both the webhook handler and the polling fallback.
-        """
         payment = (
             Payment.objects.select_for_update()
             .filter(gateway_order_id=order_id)
@@ -206,7 +316,32 @@ class BookingCheckoutService:
             return False
 
         if payment.status == Payment.Status.SUCCESS:
-            return True  # already processed — duplicate webhook delivery
+            return True
+
+        group_bookings = Booking.objects.select_for_update().filter(
+            booking_group_id=payment.booking.booking_group_id
+        )
+
+        # If the group already expired (or was cancelled) before this
+        # late-arriving confirmation showed up, do NOT silently revive it —
+        # the held unit(s) may have already been released and resold.
+        # Flag for manual reconciliation (payment captured, but booking no
+        # longer valid) instead of pretending everything's fine.
+        non_reconfirmable = group_bookings.exclude(
+            status=Booking.Status.PENDING_PAYMENT
+        )
+        if non_reconfirmable.exists():
+            payment.status = Payment.Status.SUCCESS
+            payment.completed_at = timezone.now()
+            payment.gateway_response = gateway_payload
+            payment.webhook_received_at = timezone.now()
+            payment.is_reconciled = False  # ← explicitly flag for ops review
+            payment.failure_reason = (
+                "Payment succeeded after booking group left PENDING_PAYMENT "
+                f"(status: {non_reconfirmable.first().status}) — needs manual refund/resolution."
+            )
+            payment.save()
+            return True
 
         payment.status = Payment.Status.SUCCESS
         payment.completed_at = timezone.now()
@@ -218,9 +353,6 @@ class BookingCheckoutService:
         payment.is_reconciled = True
         payment.save()
 
-        group_bookings = Booking.objects.select_for_update().filter(
-            booking_group_id=payment.booking.booking_group_id
-        )
         listing = None
         for booking in group_bookings:
             booking.status = Booking.Status.CONFIRMED
@@ -228,11 +360,6 @@ class BookingCheckoutService:
             listing = booking.listing
 
         if listing is not None:
-            # NOTE: not re-checking availability here on purpose — if a
-            # race condition let this slip through, that's a genuine
-            # overbooking edge case needing manual ops/refund handling,
-            # not something to silently auto-cancel after money has
-            # already moved. Flagging as a known gap, not solving it here.
             listing.available_count = max(
                 0, listing.available_count - group_bookings.count()
             )
@@ -257,6 +384,7 @@ class BookingCheckoutService:
         payment.failed_at = timezone.now()
         payment.failure_reason = reason
         payment.webhook_received_at = timezone.now()
+        payment.is_reconciled = True
         payment.save()
 
         Booking.objects.filter(
@@ -393,11 +521,77 @@ class CancellationService:
         return CancellationTier.PaymentMode.FULL
 
     @staticmethod
+    def _match_tier_from_snapshot(
+        tiers: list[dict], payment_mode: str, hours_before_pickup: Decimal
+    ):
+        """
+        Same range-matching as _match_tier, but against the frozen
+        dict-shaped tiers stored in Booking.cancellation_policy_snapshot
+        instead of live CancellationTier rows.
+        """
+        for tier in tiers:
+            if tier["payment_mode"] != payment_mode:
+                continue
+            lower = Decimal(tier["min_hours_before_pickup"])
+            upper = (
+                Decimal(tier["max_hours_before_pickup"])
+                if tier["max_hours_before_pickup"] is not None
+                else None
+            )
+            if hours_before_pickup >= lower and (
+                upper is None or hours_before_pickup < upper
+            ):
+                return Decimal(tier["refund_percentage"])
+        return None
+
+    # @staticmethod
+    # def _resolve_refund_percentage(booking) -> tuple[Decimal, dict]:
+    #     policy = CancellationPolicyRepository.get_current()
+    #     hours_before_pickup = CancellationService._hours_until_pickup(booking)
+    #     tier_payment_mode = CancellationService._tier_payment_mode(booking)
+
+    #     tier = (
+    #         CancellationService._match_tier(
+    #             policy, tier_payment_mode, hours_before_pickup
+    #         )
+    #         if policy
+    #         else None
+    #     )
+    #     refund_percentage = tier.refund_percentage if tier else Decimal("0")
+
+    #     meta = {
+    #         "policy_version": policy.version if policy else None,
+    #         "hours_before_pickup": hours_before_pickup,
+    #     }
+    #     return refund_percentage, meta
+
+    @staticmethod
     def _resolve_refund_percentage(booking) -> tuple[Decimal, dict]:
-        policy = CancellationPolicyRepository.get_current()
+        """
+        Prefers the policy frozen on the booking at checkout time
+        (cancellation_policy_snapshot) so that a later policy edit never
+        changes what a customer is entitled to for a booking made under
+        the old terms. Falls back to a live lookup only for bookings
+        created before this snapshot existed (empty/missing snapshot).
+        """
         hours_before_pickup = CancellationService._hours_until_pickup(booking)
         tier_payment_mode = CancellationService._tier_payment_mode(booking)
 
+        snapshot = booking.cancellation_policy_snapshot or {}
+        snapshot_tiers = snapshot.get("tiers")
+
+        if snapshot_tiers:
+            refund_percentage = CancellationService._match_tier_from_snapshot(
+                snapshot_tiers, tier_payment_mode, hours_before_pickup
+            )
+            meta = {
+                "policy_version": snapshot.get("policy_version"),
+                "hours_before_pickup": hours_before_pickup,
+            }
+            return refund_percentage or Decimal("0"), meta
+
+        # Legacy fallback: booking predates the snapshot feature.
+        policy = CancellationPolicyRepository.get_current()
         tier = (
             CancellationService._match_tier(
                 policy, tier_payment_mode, hours_before_pickup

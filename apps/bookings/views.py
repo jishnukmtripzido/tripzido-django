@@ -41,6 +41,61 @@ from apps.core.responses import error_response, success_response
 logger = logging.getLogger(__name__)
 
 
+# class CreateBookingOrderView(GenericAPIView):
+#     permission_classes = [IsAuthenticated]
+
+#     def post(self, request):
+#         data = request.data
+#         required = [
+#             "listing_id",
+#             "package_id",
+#             "pickup_datetime",
+#             "dropoff_datetime",
+#             "quantity",
+#         ]
+#         missing = [f for f in required if f not in data]
+#         if missing:
+#             return error_response(
+#                 message="Missing required fields",
+#                 errors={"missing": missing},
+#                 status=status.HTTP_400_BAD_REQUEST,
+#             )
+
+#         try:
+#             pickup_dt = datetime.fromisoformat(data["pickup_datetime"])
+#             dropoff_dt = datetime.fromisoformat(data["dropoff_datetime"])
+#             quantity = int(data["quantity"])
+#         except (ValueError, TypeError):
+#             return error_response(
+#                 message="Invalid date or quantity format",
+#                 status=status.HTTP_400_BAD_REQUEST,
+#             )
+
+#         return_url = (
+#             f"{settings.FRONTEND_BASE_URL}/checkout/processing?order_id={{order_id}}"
+#         )
+
+#         result, error = BookingCheckoutService.create_order(
+#             customer=request.user,
+#             listing_id=data["listing_id"],
+#             package_id=data["package_id"],
+#             pickup_dt=pickup_dt,
+#             dropoff_dt=dropoff_dt,
+#             quantity=quantity,
+#             payment_mode=data.get("payment_mode", "FULL"),
+#             return_url=return_url,
+#         )
+
+#         if result is None:
+#             return error_response(message=error, status=status.HTTP_400_BAD_REQUEST)
+
+#         return success_response(
+#             data=result,
+#             message="Order created successfully",
+#             status=status.HTTP_201_CREATED,
+#         )
+
+
 class CreateBookingOrderView(GenericAPIView):
     permission_classes = [IsAuthenticated]
 
@@ -84,6 +139,7 @@ class CreateBookingOrderView(GenericAPIView):
             quantity=quantity,
             payment_mode=data.get("payment_mode", "FULL"),
             return_url=return_url,
+            ip_address=request.META.get("REMOTE_ADDR"),
         )
 
         if result is None:

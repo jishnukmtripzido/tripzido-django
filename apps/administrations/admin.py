@@ -8,7 +8,9 @@ from apps.administrations.models import (
     AnnouncementBanner,
     CancellationPolicy,
     CancellationTier,
+    LegalDocument,
     Offer,
+    PlatformConfig,
     PopularRental,
 )
 
@@ -173,4 +175,53 @@ class PopularRentalAdmin(SoftDeleteAdmin):
             },
         ),
         ("Ordering", {"fields": ("sort_order",)}),
+    )
+
+
+@admin.register(PlatformConfig)
+class PlatformConfigAdmin(SoftDeleteAdmin):
+    # summernote_fields = ("value",)
+    list_display = ("key", "data_type", "created_at")
+    list_filter = ("data_type",)
+    search_fields = ("key", "description")
+    readonly_fields = ("created_at", "last_updated_at")
+    fieldsets = (
+        (None, {"fields": ("key", "value", "description", "data_type")}),
+        (
+            "Meta",
+            {
+                "fields": ("created_at", "last_updated_at"),
+                "classes": ("collapse",),
+            },
+        ),
+    )
+
+
+@admin.register(LegalDocument)
+class LegalDocumentAdmin(SummernoteModelAdmin):
+    summernote_fields = ("content",)
+    list_display = ("doc_type", "version", "is_current", "published_at", "created_at")
+    list_filter = ("doc_type", "is_current")
+    search_fields = ("doc_type",)
+    readonly_fields = ("version", "created_at", "last_updated_at")
+    fieldsets = (
+        (
+            None,
+            {
+                "fields": ("doc_type", "version", "is_current", "content"),
+            },
+        ),
+        (
+            "Publishing",
+            {
+                "fields": ("published_at", "published_by"),
+            },
+        ),
+        (
+            "Meta",
+            {
+                "fields": ("created_at", "last_updated_at"),
+                "classes": ("collapse",),
+            },
+        ),
     )

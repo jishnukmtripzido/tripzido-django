@@ -318,3 +318,124 @@ class AnnouncementBanner(BaseModel):
     def __str__(self):
         status = "current" if self.is_current else "inactive"
         return f"Banner [{self.get_page_display()}] ({status})"
+
+
+class LegalDocument(BaseModel):
+    """
+    Versioned legal documents: Platform T&C and Privacy Policy.
+    Each save() creates a new version (immutable history) — same
+    pattern as CancellationPolicy, scoped per doc_type since PLATFORM_TC
+    and PRIVACY_POLICY each need their own independent version sequence
+    and their own "current" row.
+    """
+
+    class DocType(models.TextChoices):
+        PLATFORM_TC = "PLATFORM_TC", "Platform Terms & Conditions"
+        PRIVACY_POLICY = "PRIVACY_POLICY", "Privacy Policy"
+
+    doc_type = models.CharField(max_length=20, choices=DocType.choices, db_index=True)
+    version = models.PositiveIntegerField(default=1)
+    content = models.TextField()  # Rich text / HTML / Markdown
+    is_current = models.BooleanField(default=False, db_index=True)
+
+    published_at = models.DateTimeField(null=True, blank=True)
+    published_by = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="legal_docs_published",
+    )
+
+    class Meta:
+        unique_together = ("doc_type", "version")
+        ordering = ["-version"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["doc_type"],
+                condition=models.Q(is_current=True),
+                name="unique_current_legal_document_per_type",
+            )
+        ]
+
+    def save(self, *args, **kwargs):
+        if self.pk is None:
+            last_version = LegalDocument.objects.filter(
+                doc_type=self.doc_type
+            ).aggregate(max_version=Max("version"))["max_version"]
+            self.version = (last_version or 0) + 1
+
+        if self.is_current:
+            LegalDocument.objects.filter(
+                doc_type=self.doc_type, is_current=True
+            ).exclude(pk=self.pk).update(is_current=False)
+
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"LegalDoc({self.doc_type}) v{self.version} current={self.is_current}"
+
+
+class CustomerTCAcceptance(BaseModel):
+    """
+    Records when a customer accepted a version of a platform legal
+    document. Re-acceptance is required whenever a new version is
+    published (US-A19) — get_or_create at booking time means a repeat
+    customer under the same still-current version doesn't error or
+    duplicate; it just confirms the existing acceptance stands.
+    """
+
+    user = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name="tc_acceptances"
+    )
+    legal_document = models.ForeignKey(
+        LegalDocument, on_delete=models.PROTECT, related_name="acceptances"
+    )
+    accepted_at = models.DateTimeField(auto_now_add=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+
+    class Meta:
+        unique_together = ("user", "legal_document")
+
+    def __str__(self):
+        return f"TCAccept({self.user.phone_number} v{self.legal_document.version})"
+
+
+class PlatformConfig(BaseModel):
+    """
+    Key-value store for runtime platform settings managed by admin.
+    Changes go live immediately without code deployment.
+
+    Example keys:
+      DEFAULT_COMMISSION_PERCENTAGE
+      OTP_EXPIRY_MINUTES
+      OTP_MAX_RESEND_ATTEMPTS
+      PENDING_BOOKING_EXPIRY_MINUTES
+      MIN_BOOKING_DURATION_HOURS
+      SUPPORT_TICKET_AUTO_CLOSE_DAYS
+      REFUND_TIMELINE_DAYS
+      COMPLAINT_WINDOW_DAYS
+      VENDOR_CANCELLATION_POLICY_HOURS_THRESHOLD
+      MAX_RETRY_PAYMENT_ATTEMPTS
+    """
+
+    key = models.CharField(max_length=100, unique=True, db_index=True)
+    value = models.TextField()
+    description = models.TextField(blank=True)
+    data_type = models.CharField(
+        max_length=20,
+        choices=[
+            ("STRING", "String"),
+            ("INTEGER", "Integer"),
+            ("DECIMAL", "Decimal"),
+            ("BOOLEAN", "Boolean"),
+            ("JSON", "JSON"),
+        ],
+        default="STRING",
+    )
+
+    class Meta:
+        ordering = ["key"]
+
+    def __str__(self):
+        return f"Config({self.key}) = {self.value[:60]}"

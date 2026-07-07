@@ -110,15 +110,32 @@ class Booking(BaseModel):
     # )
 
     # T&C accepted at time of booking (snapshot of which version was accepted)
-    platform_tc_version = models.CharField(max_length=50, blank=True)
+    # platform_tc_version = models.CharField(max_length=50, blank=True)
+    platform_tc_document = models.ForeignKey(
+        "administrations.LegalDocument",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="bookings_accepted",
+    )
     vendor_terms_version = models.ForeignKey(
         VendorTerms,
         null=True,
         blank=True,
-        on_delete=models.SET_NULL,
+        on_delete=models.PROTECT,
         related_name="bookings_accepted",
     )
     tc_accepted_at = models.DateTimeField(null=True, blank=True)
+    # Content snapshots, frozen at booking time. The FKs above are
+    # already effectively immutable (VendorTerms/LegalDocument only add
+    # new versions, never mutate old ones, and PROTECT blocks deletion),
+    # so these aren't required for correctness — they exist so (a)
+    # historical content can be read in bulk without an extra join per
+    # booking, and (b) the record survives even a queryset-level
+    # `.update()` on VendorTerms/LegalDocument that bypasses save()
+    # entirely and would otherwise mutate a "historical" row in place.
+    vendor_terms_snapshot = models.JSONField(default=dict, blank=True)
+    platform_tc_snapshot = models.JSONField(default=dict, blank=True)
 
     # Cancellation policy snapshot
     cancellation_policy_snapshot = models.JSONField(

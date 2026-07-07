@@ -3,6 +3,8 @@ from apps.administrations.models import (
     Offer,
     PopularRental,
     AnnouncementBanner,
+    LegalDocument,
+    PlatformConfig,
 )
 
 
@@ -50,3 +52,17 @@ class AnnouncementBannerRepository:
         return AnnouncementBanner.objects.filter(
             page=page, is_current=True, is_active=True
         ).first()
+
+
+class LegalDocumentRepository:
+
+    @staticmethod
+    def get_current(doc_type: str):
+        return LegalDocument.objects.filter(doc_type=doc_type, is_current=True).first()
+
+
+class PlatformConfigRepository:
+
+    @staticmethod
+    def get_by_key(key: str):
+        return PlatformConfig.objects.filter(key=key).first()

@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 
 from pathlib import Path
 import environ
+from celery.schedules import crontab
 
 env = environ.Env()
 
@@ -142,7 +143,12 @@ CELERY_TASK_RESULT_EXPIRES = 604800  # clean up after 7 days
 CELERY_BROKER_TRANSPORT_OPTIONS = {
     "visibility_timeout": 3600  # 3600 seconds = 1 hour
 }  # if a worker crashes while processing a task, the task will be re-queued after 1 hour (default is 24 hours)
-
+CELERY_BEAT_SCHEDULE = {
+    "expire-stale-pending-bookings": {
+        "task": "apps.bookings.tasks.expire_stale_pending_bookings",
+        "schedule": 60.0,  # every 60 seconds — tune based on how tight your 15-min window matters
+    },
+}
 
 FAST2SMS_API_KEY = env("FAST2SMS_API_KEY")
 TURNSTILE_SECRET_KEY = env("TURNSTILE_SECRET_KEY")  #
