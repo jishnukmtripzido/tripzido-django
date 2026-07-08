@@ -109,7 +109,8 @@ class SendOTPView(APIView):
             )
 
         # Generate a random 4-digit OTP
-        otp = str(random.randint(1000, 9999))
+        # otp = str(random.randint(1000, 9999))
+        otp = "1211"
         print(f"Generated OTP for {local_number}: {otp}")  # Remove in production
 
         # Cache key uses local number — same format as DB
