@@ -325,6 +325,9 @@ class VendorSubscription(BaseModel):
 
     class Meta:
         ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["vendor", "is_current", "status"]),
+        ]
 
     def save(self, *args, **kwargs):
         if self.is_current:
@@ -362,6 +365,9 @@ class VendorTerms(BaseModel):
 
     class Meta:
         ordering = ["-version"]
+        indexes = [
+            models.Index(fields=["listing", "is_current"]),
+        ]
 
     def save(self, *args, **kwargs):
         latest_version = (

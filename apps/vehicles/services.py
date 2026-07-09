@@ -15,7 +15,7 @@ class AvailabilityService:
 
     @staticmethod
     def is_available(
-        listing_id: int,
+        schedule_template_id: int | None,
         pickup_dt: datetime,
         dropoff_dt: datetime,
     ) -> tuple[bool, str]:
@@ -24,6 +24,10 @@ class AvailabilityService:
         for the pickup and dropoff days specifically — correct days
         present, not marked closed, pickup/dropoff times within
         open/close hours.
+
+        Takes schedule_template_id (not listing_id) — callers already have
+        the listing loaded, so this skips a repeat database lookup for
+        something already in memory.
 
         Days strictly BETWEEN pickup and dropoff are NOT required to be
         open, and a missing schedule entry on one of those middle days
@@ -41,7 +45,9 @@ class AvailabilityService:
         get_remaining_capacity, which combines overlapping bookings
         and blocked-period counts against the listing's fleet size.
         """
-        schedule = AvailabilityRepository.get_listing_schedule(listing_id)
+        schedule = AvailabilityRepository.get_schedule_by_template_id(
+            schedule_template_id
+        )
 
         current = pickup_dt
         while current.date() <= dropoff_dt.date():
@@ -54,7 +60,7 @@ class AvailabilityService:
                 day_schedule = schedule.get(day)
 
                 if day_schedule is None or day_schedule.is_closed:
-                    return False, f"Listing is closed on {current.strftime('%A')}s"
+                    return False, f"Hub is closed on {current.strftime('%A')}s"
 
                 if is_pickup_day:
                     if pickup_dt.time() < day_schedule.open_time:
@@ -119,9 +125,9 @@ class AvailabilityService:
         # Collected but not used for filtering — listings with is_closed=True
         # on the pickup/dropoff day are intentionally allowed through to search.
         # The detail page blocks booking for them via AvailabilityService.is_available().
-        _ = AvailabilityRepository.get_schedule_blocked_listing_ids(
-            listing_ids, boundary_days
-        )
+        # _ = AvailabilityRepository.get_schedule_blocked_listing_ids(
+        #     listing_ids, boundary_days
+        # )
 
         no_schedule_ids = AvailabilityRepository.get_listings_missing_schedule_days(
             listing_ids, boundary_days
@@ -530,6 +536,7 @@ class VehicleDetailService:
         searched_duration = None
         is_available = True
         availability_message = None
+        availability_checked = False
         displayed_available_count = listing.available_count
 
         if listing.available_count <= 0:
@@ -537,6 +544,7 @@ class VehicleDetailService:
             availability_message = "This vehicle is sold out at this location"
 
         if pickup_str and dropoff_str:
+            availability_checked = True
             pickup_dt = datetime.fromisoformat(pickup_str)
             dropoff_dt = datetime.fromisoformat(dropoff_str)
 
@@ -544,7 +552,7 @@ class VehicleDetailService:
             # having zero total fleet — that's true regardless of dates.
             if is_available:
                 is_available, availability_message = AvailabilityService.is_available(
-                    listing.pk, pickup_dt, dropoff_dt
+                    listing.schedule_template_id, pickup_dt, dropoff_dt
                 )
 
             if is_available:
@@ -567,6 +575,7 @@ class VehicleDetailService:
             applicable = [(p, Decimal("1")) for p in all_packages]
 
         selected = None
+        requested_package_unavailable = False
         if package_id_param:
             try:
                 package_id_int = int(package_id_param)
@@ -577,6 +586,8 @@ class VehicleDetailService:
                     (pair for pair in applicable if pair[0].pk == package_id_int),
                     None,
                 )
+                if selected is None:
+                    requested_package_unavailable = True
         if selected is None:
             selected = applicable[0] if applicable else None
 
@@ -619,6 +630,7 @@ class VehicleDetailService:
             "available_count": displayed_available_count,
             "packages": packages,
             "selected_package_id": selected[0].pk if selected else None,
+            "requested_package_unavailable": requested_package_unavailable,
             "searched_duration": searched_duration,
             "fare_details": fare_details,
             "pickup_location": {
@@ -638,6 +650,7 @@ class VehicleDetailService:
             "pay_at_pickup_enabled": pay_at_pickup_enabled,
             "is_available": is_available,
             "availability_message": None if is_available else availability_message,
+            "availability_checked": availability_checked,
         }
 
     @staticmethod
@@ -666,7 +679,7 @@ class VehicleDetailService:
             return None, "This vehicle is sold out at this location"
 
         is_available, message = AvailabilityService.is_available(
-            listing_id, pickup_dt, dropoff_dt
+            listing.schedule_template_id, pickup_dt, dropoff_dt
         )
         if not is_available:
             return None, message

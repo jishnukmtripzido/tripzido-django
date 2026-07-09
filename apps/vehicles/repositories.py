@@ -164,24 +164,46 @@ class AvailabilityRepository:
 
         return missing
 
+    # @staticmethod
+    # def get_listing_schedule(listing_id: int) -> dict:
+    #     """
+    #     Returns a dict of {day_of_week: TemplateScheduleDay} for a
+    #     single listing, via whichever template it's assigned. Empty
+    #     dict if no template is assigned — every day then reads as
+    #     "no entry", i.e. closed, same as before.
+    #     """
+    #     template_id = (
+    #         VehicleListing.objects.filter(id=listing_id)
+    #         .values_list("schedule_template_id", flat=True)
+    #         .first()
+    #     )
+    #     if template_id is None:
+    #         return {}
+    #     return {
+    #         d.day_of_week: d
+    #         for d in TemplateScheduleDay.objects.filter(template_id=template_id)
+    #     }
+
     @staticmethod
-    def get_listing_schedule(listing_id: int) -> dict:
+    def get_schedule_by_template_id(schedule_template_id: int | None) -> dict:
         """
-        Returns a dict of {day_of_week: TemplateScheduleDay} for a
-        single listing, via whichever template it's assigned. Empty
-        dict if no template is assigned — every day then reads as
-        "no entry", i.e. closed, same as before.
+        Returns a dict of {day_of_week: TemplateScheduleDay} for the given
+        schedule template. Empty dict if schedule_template_id is None (no
+        template assigned) — every day then reads as "no entry", i.e.
+        closed, same as before.
+
+        Takes the template ID directly instead of a listing_id, since
+        every caller already has the listing loaded in memory and can pass
+        listing.schedule_template_id — this avoids a repeat query to look
+        up something we already have.
         """
-        template_id = (
-            VehicleListing.objects.filter(id=listing_id)
-            .values_list("schedule_template_id", flat=True)
-            .first()
-        )
-        if template_id is None:
+        if schedule_template_id is None:
             return {}
         return {
             d.day_of_week: d
-            for d in TemplateScheduleDay.objects.filter(template_id=template_id)
+            for d in TemplateScheduleDay.objects.filter(
+                template_id=schedule_template_id
+            )
         }
 
     @staticmethod

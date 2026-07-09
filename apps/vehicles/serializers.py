@@ -293,6 +293,7 @@ class VehicleDetailSerializer(serializers.Serializer):
     available_count = serializers.IntegerField()
     packages = VehicleDetailPackageSerializer(many=True)
     selected_package_id = serializers.IntegerField(allow_null=True)
+    requested_package_unavailable = serializers.BooleanField()
     searched_duration = serializers.CharField(allow_null=True)
     fare_details = FareDetailsSerializer()
     pickup_location = VehiclePickupLocationSerializer()
@@ -301,6 +302,7 @@ class VehicleDetailSerializer(serializers.Serializer):
     pay_at_pickup_enabled = serializers.BooleanField()
     is_available = serializers.BooleanField()
     availability_message = serializers.CharField(allow_null=True)
+    availability_checked = serializers.BooleanField()
 
 
 class VehicleReviewItemSerializer(serializers.Serializer):

@@ -21,7 +21,8 @@ from apps.administrations.models import CancellationTier
 from apps.administrations.models import CustomerTCAcceptance
 from apps.administrations.models import LegalDocument
 from apps.administrations.repositories import LegalDocumentRepository
-from apps.administrations.models import CancellationPolicy  # for type clarity only
+from apps.administrations.models import CancellationPolicy
+from apps.vehicles.models import VehicleListing  # for type clarity only
 
 
 def _generate_booking_reference() -> str:
@@ -130,10 +131,22 @@ class BookingCheckoutService:
         vehicle) + one Payment row, then creates the matching Cashfree
         order. Returns (result, None) on success or (None, error) if
         validation fails before any Cashfree call is made.
+
+        The listing row is locked (select_for_update) for the duration of
+        this transaction so two concurrent requests for the same listing
+        can't both pass the capacity check for the same dates and create
+        overlapping bookings that exceed the fleet size.
         """
-        listing = VehicleDetailRepository.get_listing_by_id(listing_id)
+        listing = (
+            VehicleListing.objects.select_for_update()
+            .filter(id=listing_id, status=VehicleListing.Status.APPROVED)
+            .first()
+        )
         if listing is None:
             return None, "Vehicle listing not found"
+
+        if listing.available_count <= 0:
+            return None, "This vehicle is sold out at this location"
 
         if quantity < 1:
             return None, "Quantity must be at least 1"
@@ -141,10 +154,16 @@ class BookingCheckoutService:
             return None, "Requested quantity exceeds availability"
 
         is_available, message = AvailabilityService.is_available(
-            listing_id, pickup_dt, dropoff_dt
+            listing.schedule_template_id, pickup_dt, dropoff_dt
         )
         if not is_available:
             return None, message
+
+        remaining_capacity = AvailabilityService.get_remaining_capacity(
+            listing.available_count, listing_id, pickup_dt, dropoff_dt
+        )
+        if quantity > remaining_capacity:
+            return None, "Requested quantity exceeds availability for these dates"
 
         all_packages = list(listing.pricing_packages.all())
         duration_hours = AvailabilityService.compute_duration_hours(
@@ -303,69 +322,6 @@ class BookingCheckoutService:
             "payment_session_id": cf_result["payment_session_id"],
             "amount": float(total_advance),
         }, None
-
-    @staticmethod
-    @transaction.atomic
-    def confirm_payment_success(order_id: str, gateway_payload: dict) -> bool:
-        payment = (
-            Payment.objects.select_for_update()
-            .filter(gateway_order_id=order_id)
-            .first()
-        )
-        if payment is None:
-            return False
-
-        if payment.status == Payment.Status.SUCCESS:
-            return True
-
-        group_bookings = Booking.objects.select_for_update().filter(
-            booking_group_id=payment.booking.booking_group_id
-        )
-
-        # If the group already expired (or was cancelled) before this
-        # late-arriving confirmation showed up, do NOT silently revive it —
-        # the held unit(s) may have already been released and resold.
-        # Flag for manual reconciliation (payment captured, but booking no
-        # longer valid) instead of pretending everything's fine.
-        non_reconfirmable = group_bookings.exclude(
-            status=Booking.Status.PENDING_PAYMENT
-        )
-        if non_reconfirmable.exists():
-            payment.status = Payment.Status.SUCCESS
-            payment.completed_at = timezone.now()
-            payment.gateway_response = gateway_payload
-            payment.webhook_received_at = timezone.now()
-            payment.is_reconciled = False  # ← explicitly flag for ops review
-            payment.failure_reason = (
-                "Payment succeeded after booking group left PENDING_PAYMENT "
-                f"(status: {non_reconfirmable.first().status}) — needs manual refund/resolution."
-            )
-            payment.save()
-            return True
-
-        payment.status = Payment.Status.SUCCESS
-        payment.completed_at = timezone.now()
-        payment.gateway_payment_id = (
-            gateway_payload.get("data", {}).get("payment", {}).get("cf_payment_id", "")
-        )
-        payment.gateway_response = gateway_payload
-        payment.webhook_received_at = timezone.now()
-        payment.is_reconciled = True
-        payment.save()
-
-        listing = None
-        for booking in group_bookings:
-            booking.status = Booking.Status.CONFIRMED
-            booking.save()
-            listing = booking.listing
-
-        if listing is not None:
-            listing.available_count = max(
-                0, listing.available_count - group_bookings.count()
-            )
-            listing.save()
-
-        return True
 
     @staticmethod
     @transaction.atomic
@@ -618,9 +574,7 @@ class CancellationService:
         """
         Cancels a CONFIRMED booking: computes the refund entitlement
         from administrations.CancellationPolicy's current tiers, records
-        a BookingCancellation, flips the booking to CANCELLED, and
-        restores one unit to the listing's available_count (mirroring
-        how confirm_payment_success decremented it on confirmation).
+        a BookingCancellation, and flips the booking to CANCELLED.
 
         Does NOT call out to Cashfree to actually issue the refund —
         refundable_amount/forfeited_amount are computed and recorded
@@ -666,10 +620,6 @@ class CancellationService:
         booking.cancelled_at = timezone.now()
         booking.cancelled_by_role = Booking.CancelledBy.CUSTOMER
         booking.save(update_fields=["status", "cancelled_at", "cancelled_by_role"])
-
-        listing = booking.listing
-        listing.available_count = listing.available_count + booking.vehicle_count
-        listing.save(update_fields=["available_count"])
 
         return cancellation, None
 

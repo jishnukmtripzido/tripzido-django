@@ -183,6 +183,7 @@ class Booking(BaseModel):
             models.Index(fields=["listing", "status"]),
             models.Index(fields=["pickup_date", "dropoff_date"]),
             models.Index(fields=["booking_group_id"]),
+            models.Index(fields=["listing", "dropoff_date", "pickup_date"]),
         ]
 
     def __str__(self):
