@@ -1,5 +1,6 @@
 import json
 import logging
+import uuid
 from datetime import datetime
 
 # Django
@@ -22,6 +23,7 @@ from drf_spectacular.utils import OpenApiParameter, extend_schema
 from apps.bookings.cashfree_client import CashfreeClient
 from apps.bookings.serializers import (
     BookingCancellationSerializer,
+    BookingConfirmationSerializer,
     BookingDetailSerializer,
     BookingListSerializer,
     CancellationPreviewSerializer,
@@ -32,68 +34,15 @@ from apps.bookings.services import (
     BookingQueryService,
     CancellationService,
 )
+from apps.bookings.repositories import BookingRepository
 from apps.bookings.signature import verify_cashfree_signature
+from apps.payments.models import Payment
 
 # Local Apps - Core
 from apps.core.pagination import CustomPagination
 from apps.core.responses import error_response, success_response
 
 logger = logging.getLogger(__name__)
-
-
-# class CreateBookingOrderView(GenericAPIView):
-#     permission_classes = [IsAuthenticated]
-
-#     def post(self, request):
-#         data = request.data
-#         required = [
-#             "listing_id",
-#             "package_id",
-#             "pickup_datetime",
-#             "dropoff_datetime",
-#             "quantity",
-#         ]
-#         missing = [f for f in required if f not in data]
-#         if missing:
-#             return error_response(
-#                 message="Missing required fields",
-#                 errors={"missing": missing},
-#                 status=status.HTTP_400_BAD_REQUEST,
-#             )
-
-#         try:
-#             pickup_dt = datetime.fromisoformat(data["pickup_datetime"])
-#             dropoff_dt = datetime.fromisoformat(data["dropoff_datetime"])
-#             quantity = int(data["quantity"])
-#         except (ValueError, TypeError):
-#             return error_response(
-#                 message="Invalid date or quantity format",
-#                 status=status.HTTP_400_BAD_REQUEST,
-#             )
-
-#         return_url = (
-#             f"{settings.FRONTEND_BASE_URL}/checkout/processing?order_id={{order_id}}"
-#         )
-
-#         result, error = BookingCheckoutService.create_order(
-#             customer=request.user,
-#             listing_id=data["listing_id"],
-#             package_id=data["package_id"],
-#             pickup_dt=pickup_dt,
-#             dropoff_dt=dropoff_dt,
-#             quantity=quantity,
-#             payment_mode=data.get("payment_mode", "FULL"),
-#             return_url=return_url,
-#         )
-
-#         if result is None:
-#             return error_response(message=error, status=status.HTTP_400_BAD_REQUEST)
-
-#         return success_response(
-#             data=result,
-#             message="Order created successfully",
-#             status=status.HTTP_201_CREATED,
-#         )
 
 
 class CreateBookingOrderView(GenericAPIView):
@@ -306,6 +255,67 @@ class CustomerBookingDetailView(GenericAPIView):
         return success_response(
             data=serializer.data,
             message="Booking details retrieved successfully",
+            status=status.HTTP_200_OK,
+        )
+
+
+class BookingConfirmationView(GenericAPIView):
+    """
+    GET /api/bookings/confirmation/?group=<uuid>
+
+    Powers the post-checkout "Booking Confirmed!" page. A single
+    checkout can create multiple Booking rows sharing one
+    booking_group_id (bulk booking — see
+    BookingCheckoutService.create_order), all paid for by one Payment.
+    This fetches the whole group, not a single booking_reference, so a
+    multi-vehicle order shows every vehicle rather than just the first
+    one.
+    """
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = BookingConfirmationSerializer
+
+    def get(self, request):
+        group_id = request.query_params.get("group")
+        if not group_id:
+            return error_response(
+                message="Missing required 'group' query parameter",
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            uuid.UUID(str(group_id))
+        except (ValueError, AttributeError, TypeError):
+            return error_response(
+                message="'group' must be a valid booking group id",
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        bookings = list(BookingRepository.get_bookings_by_group(group_id, request.user))
+        if not bookings:
+            return error_response(
+                message="Booking not found", status=status.HTTP_404_NOT_FOUND
+            )
+
+        payment = (
+            Payment.objects.filter(booking__booking_group_id=group_id)
+            .order_by("-initiated_at")
+            .first()
+        )
+
+        data = {
+            "booking_group_id": group_id,
+            "payment_status": payment.status if payment else "",
+            "payment_mode": bookings[0].payment_mode,
+            "total_paid": float(sum(b.advance_amount for b in bookings)),
+            "total_deposit": float(sum(b.security_deposit_amount for b in bookings)),
+            "vehicle_count": len(bookings),
+            "bookings": bookings,
+        }
+        serializer = BookingConfirmationSerializer(data, context={"request": request})
+        return success_response(
+            data=serializer.data,
+            message="Booking confirmation retrieved successfully",
             status=status.HTTP_200_OK,
         )
 

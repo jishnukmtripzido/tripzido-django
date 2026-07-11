@@ -5,6 +5,7 @@ from apps.bookings.views import (
     CashfreeWebhookView,
     CustomerBookingsView,
     CustomerBookingDetailView,
+    BookingConfirmationView,
     BookingCancellationPreviewView,
     CancelBookingView,
 )
@@ -17,6 +18,11 @@ urlpatterns = [
         name="booking-payment-status",
     ),
     path("webhooks/cashfree/", CashfreeWebhookView.as_view(), name="cashfree-webhook"),
+    path(
+        "confirmation/",
+        BookingConfirmationView.as_view(),
+        name="booking-confirmation",
+    ),
     path("", CustomerBookingsView.as_view(), name="customer-bookings"),
     path(
         "<int:booking_id>/",

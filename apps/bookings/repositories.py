@@ -50,6 +50,30 @@ class BookingRepository:
             .first()
         )
 
+    @staticmethod
+    def get_bookings_by_group(group_id, customer):
+        """
+        Returns every Booking row sharing the given booking_group_id,
+        scoped to the requesting customer (so one customer can never
+        pull up another customer's confirmation by adjusting a group id
+        in the URL).
+
+        A bulk booking (quantity > 1 at checkout) creates multiple
+        Booking rows sharing one booking_group_id and one Payment —
+        this is what BookingConfirmationView fetches to show every
+        vehicle in the order, not just one.
+        """
+        return (
+            Booking.objects.filter(booking_group_id=group_id, customer=customer)
+            .select_related(
+                "listing__vehicle_type",
+                "listing__vendor",
+                "pickup_location",
+                "pricing_package__package_type",
+            )
+            .order_by("created_at")
+        )
+
 
 class BookingCancellationRepository:
     """

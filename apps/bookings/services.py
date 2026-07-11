@@ -412,6 +412,11 @@ class BookingCheckoutService:
         )
         return {
             "status": payment.status,
+            # Added: the frontend confirmation page needs this to build
+            # /booking-confirmed?group=<uuid> — a single booking_reference
+            # can't represent a bulk booking (multiple Booking rows share
+            # one group id but each have their own reference).
+            "booking_group_id": str(payment.booking.booking_group_id),
             "booking_references": [b.booking_reference for b in bookings],
         }
 
@@ -552,27 +557,6 @@ class CancellationService:
             ):
                 return Decimal(tier["refund_percentage"])
         return None
-
-    # @staticmethod
-    # def _resolve_refund_percentage(booking) -> tuple[Decimal, dict]:
-    #     policy = CancellationPolicyRepository.get_current()
-    #     hours_before_pickup = CancellationService._hours_until_pickup(booking)
-    #     tier_payment_mode = CancellationService._tier_payment_mode(booking)
-
-    #     tier = (
-    #         CancellationService._match_tier(
-    #             policy, tier_payment_mode, hours_before_pickup
-    #         )
-    #         if policy
-    #         else None
-    #     )
-    #     refund_percentage = tier.refund_percentage if tier else Decimal("0")
-
-    #     meta = {
-    #         "policy_version": policy.version if policy else None,
-    #         "hours_before_pickup": hours_before_pickup,
-    #     }
-    #     return refund_percentage, meta
 
     @staticmethod
     def _resolve_refund_percentage(booking) -> tuple[Decimal, dict]:
