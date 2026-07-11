@@ -24,7 +24,7 @@ class CancellationPolicyService:
         return f"{min_h} – {max_h} hours before pickup"
 
     @staticmethod
-    def _auto_description(refund: int) -> str:
+    def _auto_description(refund: float) -> str:
         if refund == 100:
             return "Full refund of advance payment."
         if refund == 0:
@@ -41,7 +41,9 @@ class CancellationPolicyService:
         for tier in tiers:
             min_h = tier.min_hours_before_pickup
             max_h = tier.max_hours_before_pickup
-            refund = int(tier.refund_percentage)
+            # Decimal → float, rounded to 2dp to avoid binary float
+            # artifacts (e.g. 33.33 rendering as 33.330000000000005).
+            refund = round(float(tier.refund_percentage), 2)
             rules.append(
                 {
                     "hours_before_pickup": min_h,

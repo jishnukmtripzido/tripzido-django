@@ -115,13 +115,16 @@ class CancellationPolicyRuleSerializer(serializers.Serializer):
     """
 
     hours_before_pickup = serializers.IntegerField()
-    refund_percentage = serializers.IntegerField()
+    refund_percentage = serializers.FloatField()
     label = serializers.CharField()
     description = serializers.CharField()
 
 
 class CancellationPreviewSerializer(serializers.Serializer):
-    """Response shape for GET /api/bookings/{id}/cancellation-preview/."""
+    """
+    Response shape for GET /api/bookings/{id}/cancellation-preview/.
+    Matches the dict returned by CancellationService.preview_cancellation().
+    """
 
     payment_mode = serializers.CharField()
     hours_before_pickup = serializers.FloatField()
@@ -129,9 +132,16 @@ class CancellationPreviewSerializer(serializers.Serializer):
     paid_amount = serializers.FloatField()
     refundable_amount = serializers.FloatField()
     forfeited_amount = serializers.FloatField()
-    full_payment_rules = CancellationPolicyRuleSerializer(many=True)
-    partial_payment_rules = CancellationPolicyRuleSerializer(many=True)
-    policy_note = serializers.CharField(allow_blank=True)
+    policy_rules = serializers.SerializerMethodField()
+    policy_note = serializers.CharField(allow_blank=True)  # ← was source="note"
+
+    def get_policy_rules(self, obj):
+        rules_key = (
+            "full_payment_rules"
+            if obj["payment_mode"] == Booking.PaymentMode.FULL
+            else "partial_payment_rules"
+        )
+        return obj[rules_key]
 
 
 class BookingCancellationSerializer(serializers.ModelSerializer):
@@ -235,7 +245,6 @@ class BookingDetailSerializer(serializers.ModelSerializer):
             "advance_amount",
             "remaining_amount",
             "security_deposit_amount",
-            "platform_tc_version",
             "handed_over_at",
             "returned_at",
             "cancelled_at",
