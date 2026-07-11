@@ -9,6 +9,8 @@ from apps.administrations.models import CancellationTier
 import json
 from decimal import Decimal, InvalidOperation
 from django.core.cache import cache
+from apps.administrations.repositories import LegalDocumentRepository
+from apps.administrations.models import LegalDocument
 
 
 class CancellationPolicyService:
@@ -171,3 +173,10 @@ class PlatformConfigService:
             return json.loads(config.value)
         except (TypeError, ValueError):
             return default
+
+
+class LegalDocumentService:
+
+    @staticmethod
+    def get_current(doc_type: str):
+        return LegalDocumentRepository.get_current(doc_type)

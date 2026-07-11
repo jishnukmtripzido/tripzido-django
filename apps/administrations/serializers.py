@@ -122,3 +122,11 @@ class AnnouncementBannerSerializer(serializers.Serializer):
     content = serializers.CharField()
     page = serializers.CharField()
     is_current = serializers.BooleanField()
+
+
+class LegalDocumentSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    doc_type = serializers.CharField()
+    version = serializers.IntegerField()
+    content = serializers.CharField()
+    published_at = serializers.DateTimeField(allow_null=True)

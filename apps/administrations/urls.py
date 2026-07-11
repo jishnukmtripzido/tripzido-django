@@ -4,6 +4,7 @@ from apps.administrations.views import (
     OfferListView,
     PopularRentalListView,
     AnnouncementBannerView,
+    LegalDocumentView,
 )
 
 urlpatterns = [
@@ -21,4 +22,5 @@ urlpatterns = [
         AnnouncementBannerView.as_view(),
         name="announcement-banner",
     ),
+    path("legal-document/", LegalDocumentView.as_view(), name="legal-document"),
 ]

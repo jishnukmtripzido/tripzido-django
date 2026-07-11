@@ -372,9 +372,13 @@ class VehicleDetailService:
         "Fuel Charges are not included in the security deposit or rent.",
     ]
 
+    # @staticmethod
+    # def _get_current_terms(listing):
+    #     terms_list = getattr(listing, "current_terms_list", [])
+    #     return terms_list[0] if terms_list else None
     @staticmethod
     def _get_current_terms(listing):
-        terms_list = getattr(listing, "current_terms_list", [])
+        terms_list = getattr(listing.vendor, "current_terms_list", [])
         return terms_list[0] if terms_list else None
 
     @staticmethod
@@ -720,6 +724,7 @@ class VehicleDetailService:
         terms = VehicleDetailService._get_current_terms(listing)
         operating_hours = VehicleDetailService._build_operating_hours(listing)
         policies = VehicleDetailService._build_policies(listing, terms, operating_hours)
+        vendor_terms_items = VehicleDetailService._build_terms_and_conditions(terms)
 
         km_limit = pkg.km_limit
         total_km_limit = (
@@ -745,6 +750,9 @@ class VehicleDetailService:
             "dropoff_datetime": dropoff_dt.isoformat(),
             "duration_label": format_duration(duration_hours),
             "pickup_location_name": location.name,
+            "vendor_id": listing.vendor.pk,  # NEW
+            "vendor_name": listing.vendor.business_name,  # NEW
+            "vendor_terms": vendor_terms_items,
             "things_to_remember": {
                 "km_limit": total_km_limit,
                 "excess_charge": policies["excess_charge"],

@@ -17,6 +17,8 @@ from apps.administrations.services import (
     CancellationPolicyService,
     PlatformConfigService,
 )
+from apps.vendors.models import VendorTerms, VendorSubscription
+
 from apps.administrations.models import CancellationTier
 from apps.administrations.models import CustomerTCAcceptance
 from apps.administrations.models import LegalDocument
@@ -137,11 +139,7 @@ class BookingCheckoutService:
         can't both pass the capacity check for the same dates and create
         overlapping bookings that exceed the fleet size.
         """
-        listing = (
-            VehicleListing.objects.select_for_update()
-            .filter(id=listing_id, status=VehicleListing.Status.APPROVED)
-            .first()
-        )
+        listing = VehicleDetailRepository.get_listing_for_checkout(listing_id)
         if listing is None:
             return None, "Vehicle listing not found"
 
@@ -322,6 +320,61 @@ class BookingCheckoutService:
             "payment_session_id": cf_result["payment_session_id"],
             "amount": float(total_advance),
         }, None
+
+    @staticmethod
+    @transaction.atomic
+    def confirm_payment_success(order_id: str, gateway_payload: dict) -> bool:
+        payment = (
+            Payment.objects.select_for_update()
+            .filter(gateway_order_id=order_id)
+            .first()
+        )
+        if payment is None:
+            return False
+
+        if payment.status == Payment.Status.SUCCESS:
+            return True
+
+        group_bookings = Booking.objects.select_for_update().filter(
+            booking_group_id=payment.booking.booking_group_id
+        )
+
+        # If the group already expired (or was cancelled) before this
+        # late-arriving confirmation showed up, do NOT silently revive it —
+        # the held unit(s) may have already been released and resold.
+        # Flag for manual reconciliation (payment captured, but booking no
+        # longer valid) instead of pretending everything's fine.
+        non_reconfirmable = group_bookings.exclude(
+            status=Booking.Status.PENDING_PAYMENT
+        )
+        if non_reconfirmable.exists():
+            payment.status = Payment.Status.SUCCESS
+            payment.completed_at = timezone.now()
+            payment.gateway_response = gateway_payload
+            payment.webhook_received_at = timezone.now()
+            payment.is_reconciled = False  # ← explicitly flag for ops review
+            payment.failure_reason = (
+                "Payment succeeded after booking group left PENDING_PAYMENT "
+                f"(status: {non_reconfirmable.first().status}) — needs manual refund/resolution."
+            )
+            payment.save()
+            return True
+
+        payment.status = Payment.Status.SUCCESS
+        payment.completed_at = timezone.now()
+        payment.gateway_payment_id = (
+            gateway_payload.get("data", {}).get("payment", {}).get("cf_payment_id", "")
+        )
+        payment.gateway_response = gateway_payload
+        payment.webhook_received_at = timezone.now()
+        payment.is_reconciled = True
+        payment.save()
+
+        for booking in group_bookings:
+            booking.status = Booking.Status.CONFIRMED
+            booking.save()
+
+        return True
 
     @staticmethod
     @transaction.atomic

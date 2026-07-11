@@ -342,36 +342,35 @@ class VendorSubscription(BaseModel):
 
 class VendorTerms(BaseModel):
     """
-    Vendor-defined T&C and 'Things to Remember' for a listing (US-V10).
-    Versioned: a new record is created on every update.
+    Vendor-defined T&C and 'Things to Remember', shared across all of
+    the vendor's listings. Versioned: a new record is created on every
+    update.
     """
 
-    listing = models.ForeignKey(
-        "vehicles.VehicleListing", on_delete=models.CASCADE, related_name="vendor_terms"
+    vendor = models.ForeignKey(
+        Vendor, on_delete=models.CASCADE, related_name="vendor_terms"
     )
+
     terms_items = models.JSONField(default=list)
 
-    # Structured "Things to Remember" (US-C07)
     security_deposit_note = models.TextField(blank=True)
     operating_hours_note = models.TextField(blank=True)
     distance_limit_note = models.TextField(blank=True)
     excess_charge_note = models.TextField(blank=True)
     late_penalty_note = models.TextField(blank=True)
 
-    is_current = models.BooleanField(
-        default=True, db_index=True
-    )  # only latest is current
+    is_current = models.BooleanField(default=True, db_index=True)
     version = models.PositiveIntegerField(default=1)
 
     class Meta:
         ordering = ["-version"]
         indexes = [
-            models.Index(fields=["listing", "is_current"]),
+            models.Index(fields=["vendor", "is_current"]),
         ]
 
     def save(self, *args, **kwargs):
         latest_version = (
-            VendorTerms.objects.filter(listing=self.listing)
+            VendorTerms.objects.filter(vendor=self.vendor)
             .order_by("-version")
             .values_list("version", flat=True)
             .first()
@@ -379,7 +378,6 @@ class VendorTerms(BaseModel):
         )
 
         if self.pk is not None:
-            # Editing an existing record should create a new versioned row.
             self.version = latest_version + 1
             self.pk = None
             self._state.adding = True
@@ -388,11 +386,11 @@ class VendorTerms(BaseModel):
             self.version = latest_version + 1
 
         if self.is_current:
-            VendorTerms.objects.filter(listing=self.listing, is_current=True).update(
+            VendorTerms.objects.filter(vendor=self.vendor, is_current=True).update(
                 is_current=False
             )
 
         super().save(*args, **kwargs)
 
     def __str__(self):
-        return f"VendorTerms({self.listing}) v{self.version}"
+        return f"VendorTerms({self.vendor.business_name}) v{self.version}"

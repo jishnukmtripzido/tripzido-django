@@ -96,16 +96,15 @@ class VendorSubscriptionAdmin(SoftDeleteAdmin):
 @admin.register(VendorTerms)
 class VendorTermsAdmin(SoftDeleteAdmin):
     list_display = (
-        "listing",
-        "terms_items",
+        "vendor",
+        "version",
+        "is_current",
         "security_deposit_note",
         "operating_hours_note",
         "distance_limit_note",
         "excess_charge_note",
         "late_penalty_note",
-        "is_current",
-        "version",
     )
-    list_filter = ()
-    search_fields = ()
-    readonly_fields = ()
+    list_filter = ("is_current",)
+    search_fields = ("vendor__business_name",)
+    readonly_fields = ("is_deleted_display", "version")

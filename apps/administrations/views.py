@@ -10,6 +10,7 @@ from apps.administrations.services import (
     OfferService,
     PopularRentalService,
     AnnouncementBannerService,
+    LegalDocumentService,
 )
 from apps.administrations.serializers import (
     CancellationPolicySerializer,
@@ -18,8 +19,10 @@ from apps.administrations.serializers import (
     PopularRentalQuerySerializer,
     AnnouncementBannerSerializer,
     AnnouncementBannerQuerySerializer,
+    LegalDocumentSerializer,
 )
 from apps.core.responses import success_response, error_response
+from apps.administrations.models import LegalDocument
 
 
 class CancellationPolicyView(GenericAPIView):
@@ -180,3 +183,51 @@ class AnnouncementBannerView(GenericAPIView):
                 errors=str(e),
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
+
+class LegalDocumentView(GenericAPIView):
+    """
+    GET /api/administrations/legal-document/?doc_type=PLATFORM_TC
+
+    Returns the current version of a platform legal document. Used by
+    the checkout terms modal, and reusable for footer Terms/Privacy links.
+    """
+
+    permission_classes = [AllowAny]
+    serializer_class = LegalDocumentSerializer
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name="doc_type",
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                required=True,
+                description="PLATFORM_TC | PRIVACY_POLICY",
+            ),
+        ],
+        responses=LegalDocumentSerializer,
+    )
+    def get(self, request):
+        doc_type = request.query_params.get("doc_type")
+        valid_types = [c[0] for c in LegalDocument.DocType.choices]
+        if doc_type not in valid_types:
+            return error_response(
+                message="Invalid or missing doc_type",
+                errors={"doc_type": f"Must be one of {valid_types}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        doc = LegalDocumentService.get_current(doc_type)
+        if doc is None:
+            return error_response(
+                message="No current document found for this type",
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        serializer = LegalDocumentSerializer(doc)
+        return success_response(
+            data=serializer.data,
+            message="Legal document retrieved successfully",
+            status=status.HTTP_200_OK,
+        )

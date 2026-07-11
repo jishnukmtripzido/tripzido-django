@@ -369,6 +369,9 @@ class CheckoutSummarySerializer(serializers.Serializer):
     dropoff_datetime = serializers.CharField()
     duration_label = serializers.CharField()
     pickup_location_name = serializers.CharField()
+    vendor_id = serializers.IntegerField()  # NEW
+    vendor_name = serializers.CharField()  # NEW
+    vendor_terms = serializers.ListField(child=serializers.CharField())  # NEW
     things_to_remember = ThingsToRememberSerializer()
 
 

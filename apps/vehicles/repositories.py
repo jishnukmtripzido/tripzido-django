@@ -355,7 +355,7 @@ class VehicleDetailRepository:
                     queryset=VehicleImage.objects.order_by("sort_order"),
                 ),
                 Prefetch(
-                    "vendor_terms",
+                    "vendor__vendor_terms",
                     queryset=VendorTerms.objects.filter(is_current=True),
                     to_attr="current_terms_list",
                 ),
@@ -364,6 +364,38 @@ class VehicleDetailRepository:
                     queryset=VendorSubscription.objects.filter(
                         is_current=True,
                         status=VendorSubscription.Status.ACTIVE,
+                    ).select_related("plan__commission"),
+                    to_attr="current_subscription_list",
+                ),
+            )
+            .first()
+        )
+
+    @staticmethod
+    def get_listing_for_checkout(listing_id: int):
+        """
+        Same shape as get_listing_by_id, but with select_for_update() for
+        use inside BookingCheckoutService.create_order's transaction, so
+        two concurrent checkouts on the same listing can't both pass the
+        capacity check. Kept as a separate method (rather than adding a
+        for_update flag to get_listing_by_id) since locking is only ever
+        wanted in the checkout path, never on read-only detail/search
+        requests.
+        """
+        return (
+            VehicleListing.objects.select_for_update()
+            .filter(id=listing_id, status=VehicleListing.Status.APPROVED)
+            .select_related("vendor")
+            .prefetch_related(
+                Prefetch(
+                    "vendor__vendor_terms",
+                    queryset=VendorTerms.objects.filter(is_current=True),
+                    to_attr="current_terms_list",
+                ),
+                Prefetch(
+                    "vendor__subscriptions",
+                    queryset=VendorSubscription.objects.filter(
+                        is_current=True, status=VendorSubscription.Status.ACTIVE
                     ).select_related("plan__commission"),
                     to_attr="current_subscription_list",
                 ),
