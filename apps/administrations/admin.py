@@ -12,6 +12,7 @@ from apps.administrations.models import (
     Offer,
     PlatformConfig,
     PopularRental,
+    TaxRate,
 )
 
 
@@ -221,6 +222,51 @@ class LegalDocumentAdmin(SummernoteModelAdmin):
             "Meta",
             {
                 "fields": ("created_at", "last_updated_at"),
+                "classes": ("collapse",),
+            },
+        ),
+    )
+
+
+@admin.register(TaxRate)
+class TaxRateAdmin(SoftDeleteAdmin):
+    list_display = (
+        "context",
+        "name",
+        "percentage",
+        "version",
+        "is_current",
+        "effective_from",
+        "created_at",
+    )
+    list_filter = ("context", "is_current")
+    search_fields = ("name",)
+    readonly_fields = ("version", "created_at", "last_updated_at")
+    fieldsets = (
+        (
+            "Basic Info",
+            {
+                "fields": (
+                    "context",
+                    "name",
+                    "percentage",
+                    "effective_from",
+                    "is_current",
+                )
+            },
+        ),
+        (
+            "Tax Breakdown",
+            {"fields": ("cgst_percentage", "sgst_percentage", "igst_percentage")},
+        ),
+        (
+            "Invoicing",
+            {"fields": ("hsn_sac_code",)},
+        ),
+        (
+            "Meta",
+            {
+                "fields": ("version", "created_at", "last_updated_at"),
                 "classes": ("collapse",),
             },
         ),

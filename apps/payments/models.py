@@ -24,8 +24,13 @@ class Payment(BaseModel):
         PARTIALLY_REFUNDED = "PARTIALLY_REFUNDED", "Partially Refunded"
 
     booking = models.ForeignKey(
-        "bookings.Booking", on_delete=models.CASCADE, related_name="payments"
+        "bookings.Booking", on_delete=models.PROTECT, related_name="payments"
     )
+    booking_group_id = models.UUIDField(
+        db_index=True,
+        help_text="The booking_group_id of the associated booking, for easier querying across multiple payments.",
+    )
+
     payment_type = models.CharField(max_length=25, choices=PaymentType.choices)
     amount = models.DecimalField(max_digits=12, decimal_places=2)
 
@@ -54,6 +59,7 @@ class Payment(BaseModel):
         ordering = ["-initiated_at"]
         indexes = [
             models.Index(fields=["booking", "status"]),
+            models.Index(fields=["booking_group_id", "status"]),  # NEW
         ]
 
     def __str__(self):

@@ -94,6 +94,39 @@ class Booking(BaseModel):
     advance_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     remaining_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
 
+    vendor_tax_rate = models.ForeignKey(
+        "administrations.TaxRate",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="bookings_as_vendor_tax",
+        limit_choices_to={"context": "VENDOR_RENTAL"},
+    )
+    vendor_tax_percentage = models.DecimalField(
+        max_digits=5, decimal_places=2, default=0
+    )
+    vendor_tax_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+
+    commission_tax_rate = models.ForeignKey(
+        "administrations.TaxRate",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="bookings_as_commission_tax",
+        limit_choices_to={"context": "PLATFORM_COMMISSION"},
+    )
+    commission_tax_percentage = models.DecimalField(
+        max_digits=5, decimal_places=2, default=0
+    )
+    commission_tax_amount = models.DecimalField(
+        max_digits=12, decimal_places=2, default=0
+    )
+
+    # customer_payable_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    # vendor_payout_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+
+    tax_snapshot = models.JSONField(default=dict, blank=True)
+
     # # Coupon
     # coupon = models.ForeignKey(
     #     "coupon.Coupon",

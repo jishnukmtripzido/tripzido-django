@@ -298,7 +298,7 @@ class BookingConfirmationView(GenericAPIView):
             )
 
         payment = (
-            Payment.objects.filter(booking__booking_group_id=group_id)
+            Payment.objects.filter(booking_group_id=group_id)
             .order_by("-initiated_at")
             .first()
         )

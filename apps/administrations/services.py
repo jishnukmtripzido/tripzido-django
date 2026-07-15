@@ -4,13 +4,15 @@ from apps.administrations.repositories import (
     OfferRepository,
     PopularRentalRepository,
     PlatformConfigRepository,
+    TaxRateRepository,
 )
 from apps.administrations.models import CancellationTier
 import json
 from decimal import Decimal, InvalidOperation
 from django.core.cache import cache
 from apps.administrations.repositories import LegalDocumentRepository
-from apps.administrations.models import LegalDocument
+from apps.administrations.models import LegalDocument, TaxRate
+from decimal import Decimal
 
 
 class CancellationPolicyService:
@@ -182,3 +184,57 @@ class LegalDocumentService:
     @staticmethod
     def get_current(doc_type: str):
         return LegalDocumentRepository.get_current(doc_type)
+
+
+class TaxCalculationService:
+    """
+    Single source of truth for tax math — used by both the pre-checkout
+    preview (VehicleDetailService) and actual order creation
+    (BookingCheckoutService), so the number shown before payment can
+    never drift from what's actually charged.
+
+    Returns rate=None cleanly (percentage/amount both 0) when no
+    TaxRate row exists for a context yet — same fail-safe philosophy as
+    PlatformConfigService: missing config should never break checkout.
+    """
+
+    @staticmethod
+    def get_vendor_rental_tax(rent_amount: Decimal) -> dict:
+        rate = TaxRateRepository.get_current(TaxRate.Context.VENDOR_RENTAL)
+        percentage = rate.percentage if rate else Decimal("0")
+        amount = (rent_amount * percentage / Decimal("100")).quantize(Decimal("0.01"))
+        return {"rate": rate, "percentage": percentage, "amount": amount}
+
+    @staticmethod
+    def get_commission_tax(commission_amount: Decimal) -> dict:
+        rate = TaxRateRepository.get_current(TaxRate.Context.PLATFORM_COMMISSION)
+        percentage = rate.percentage if rate else Decimal("0")
+        amount = (commission_amount * percentage / Decimal("100")).quantize(
+            Decimal("0.01")
+        )
+        return {"rate": rate, "percentage": percentage, "amount": amount}
+
+    @staticmethod
+    def build_snapshot(vendor_tax: dict, commission_tax: dict) -> dict:
+        """Freezes rate content itself, not just the FK — same reasoning
+        as _build_vendor_terms_snapshot / _build_platform_tc_snapshot."""
+
+        def _freeze(tax):
+            rate = tax["rate"]
+            if rate is None:
+                return None
+            return {
+                "version": rate.version,
+                "name": rate.name,
+                "percentage": str(rate.percentage),
+                "cgst_percentage": str(rate.cgst_percentage),
+                "sgst_percentage": str(rate.sgst_percentage),
+                "igst_percentage": str(rate.igst_percentage),
+                "hsn_sac_code": rate.hsn_sac_code,
+                "amount": str(tax["amount"]),
+            }
+
+        return {
+            "vendor_rental_tax": _freeze(vendor_tax),
+            "platform_commission_tax": _freeze(commission_tax),
+        }

@@ -5,6 +5,7 @@ from apps.administrations.models import (
     AnnouncementBanner,
     LegalDocument,
     PlatformConfig,
+    TaxRate,
 )
 
 
@@ -66,3 +67,10 @@ class PlatformConfigRepository:
     @staticmethod
     def get_by_key(key: str):
         return PlatformConfig.objects.filter(key=key).first()
+
+
+class TaxRateRepository:
+
+    @staticmethod
+    def get_current(context: str):
+        return TaxRate.objects.filter(context=context, is_current=True).first()

@@ -439,3 +439,86 @@ class PlatformConfig(BaseModel):
 
     def __str__(self):
         return f"Config({self.key}) = {self.value[:60]}"
+
+
+from django.db.models import Max
+
+
+class TaxRate(BaseModel):
+    """
+    Platform-wide tax rate, versioned — same pattern as
+    CancellationPolicy / LegalDocument. Every admin change creates a
+    new row instead of mutating an old one, so past bookings can
+    snapshot the exact rate that applied to them and stay correct even
+    after the rate changes later.
+
+    Two independent contexts, deliberately kept separate:
+
+      VENDOR_RENTAL
+        Tax on the rental service the *vendor* sells to the customer.
+        The vendor is the legal supplier of this service — this rate
+        exists so the platform can calculate/display/collect it
+        correctly on the vendor's behalf, not because the platform
+        owes this tax itself.
+
+      PLATFORM_COMMISSION
+        Tax on the commission/facilitation service the *platform*
+        sells to the vendor. This is the platform's own tax liability.
+
+    Keeping these as two rows (rather than one flat "tax %" field)
+    means a change to your commission-service tax rate never
+    accidentally touches vendor rental tax, and vice versa.
+    """
+
+    class Context(models.TextChoices):
+        VENDOR_RENTAL = "VENDOR_RENTAL", "Vendor Rental Service"
+        PLATFORM_COMMISSION = "PLATFORM_COMMISSION", "Platform Commission Service"
+
+    context = models.CharField(max_length=25, choices=Context.choices, db_index=True)
+    name = models.CharField(max_length=100)  # e.g. "GST 18%"
+
+    # Overall rate, plus the CGST/SGST/IGST split. The split isn't
+    # needed for the arithmetic (percentage alone is enough to compute
+    # amounts) but Indian GST invoices need it shown, so it's captured
+    # here rather than recomputed ad hoc at invoice time.
+    percentage = models.DecimalField(max_digits=5, decimal_places=2)  # e.g. 18.00
+    cgst_percentage = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    sgst_percentage = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    igst_percentage = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+
+    hsn_sac_code = models.CharField(
+        max_length=20,
+        blank=True,
+        help_text="HSN/SAC code for invoicing, e.g. 9973 (rental services) or 9985 (support services). Confirm the correct code with your CA.",
+    )
+
+    is_current = models.BooleanField(default=True, db_index=True)
+    version = models.PositiveIntegerField(default=1)
+    effective_from = models.DateField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-version"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["context"],
+                condition=models.Q(is_current=True),
+                name="unique_current_tax_rate_per_context",
+            )
+        ]
+
+    def save(self, *args, **kwargs):
+        if self.pk is None:
+            last_version = TaxRate.objects.filter(context=self.context).aggregate(
+                max_version=Max("version")
+            )["max_version"]
+            self.version = (last_version or 0) + 1
+
+        if self.is_current:
+            TaxRate.objects.filter(context=self.context, is_current=True).exclude(
+                pk=self.pk
+            ).update(is_current=False)
+
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"TaxRate({self.context}) v{self.version} {self.percentage}%"

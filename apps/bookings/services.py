@@ -16,9 +16,9 @@ from apps.administrations.repositories import CancellationPolicyRepository
 from apps.administrations.services import (
     CancellationPolicyService,
     PlatformConfigService,
+    TaxCalculationService,
 )
 from apps.vendors.models import VendorTerms, VendorSubscription
-
 from apps.administrations.models import CancellationTier
 from apps.administrations.models import CustomerTCAcceptance
 from apps.administrations.models import LegalDocument
@@ -202,6 +202,11 @@ class BookingCheckoutService:
         unit_commission = (
             unit_rent_amount * commission_percentage / Decimal("100")
         ).quantize(Decimal("0.01"))
+
+        vendor_tax = TaxCalculationService.get_vendor_rental_tax(unit_rent_amount)
+        commission_tax = TaxCalculationService.get_commission_tax(unit_commission)
+        tax_snapshot = TaxCalculationService.build_snapshot(vendor_tax, commission_tax)
+
         unit_net = unit_rent_amount - unit_commission
 
         vendor_terms = VehicleDetailService._get_current_terms(listing)
@@ -272,6 +277,13 @@ class BookingCheckoutService:
                         "PENDING_BOOKING_EXPIRY_MINUTES", default=15
                     )
                 ),
+                vendor_tax_rate=vendor_tax["rate"],
+                vendor_tax_percentage=vendor_tax["percentage"],
+                commission_tax_rate=commission_tax["rate"],
+                commission_tax_percentage=commission_tax["percentage"],
+                tax_snapshot=tax_snapshot,
+                vendor_tax_amount=vendor_tax["amount"],
+                commission_tax_amount=commission_tax["amount"],
             )
             bookings.append(booking)
 
@@ -280,6 +292,7 @@ class BookingCheckoutService:
 
         payment = Payment.objects.create(
             booking=bookings[0],
+            booking_group_id=group_id,
             payment_type=(
                 Payment.PaymentType.PARTIAL
                 if effective_mode == "PARTIAL"
@@ -336,7 +349,7 @@ class BookingCheckoutService:
             return True
 
         group_bookings = Booking.objects.select_for_update().filter(
-            booking_group_id=payment.booking.booking_group_id
+            booking_group_id=payment.booking_group_id
         )
 
         # If the group already expired (or was cancelled) before this
@@ -396,9 +409,9 @@ class BookingCheckoutService:
         payment.is_reconciled = True
         payment.save()
 
-        Booking.objects.filter(
-            booking_group_id=payment.booking.booking_group_id
-        ).update(status=Booking.Status.PAYMENT_FAILED)
+        Booking.objects.filter(booking_group_id=payment.booking_group_id).update(
+            status=Booking.Status.PAYMENT_FAILED
+        )
 
         return True
 

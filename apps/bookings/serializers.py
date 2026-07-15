@@ -299,7 +299,7 @@ class BookingDetailSerializer(serializers.ModelSerializer):
 
     def get_payments(self, booking):
         payments = Payment.objects.filter(
-            booking__booking_group_id=booking.booking_group_id
+            booking_group_id=booking.booking_group_id
         ).order_by("-initiated_at")
         return BookingPaymentSerializer(payments, many=True).data
 
