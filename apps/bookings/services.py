@@ -11,7 +11,11 @@ from apps.vehicles.repositories import VehicleDetailRepository
 from apps.vehicles.services import AvailabilityService, VehicleDetailService
 from django.conf import settings
 from apps.bookings.models import Booking
-from apps.bookings.repositories import BookingRepository, BookingCancellationRepository
+from apps.bookings.repositories import (
+    BookingRepository,
+    BookingCancellationRepository,
+    VendorBookingRepository,
+)
 from apps.administrations.repositories import CancellationPolicyRepository
 from apps.administrations.services import (
     CancellationPolicyService,
@@ -706,3 +710,119 @@ class CancellationService:
             ),
             "policy_note": policy_info["note"] if policy_info else "",
         }, None
+
+
+class VendorBookingService:
+
+    # Status filter tabs for the vendor bookings list — "all" is the
+    # default per the frontend's initial "All" tab, and is the one case
+    # with no status filter applied at all.
+    STATUS_FILTER_MAP: dict[str, list[str] | None] = {
+        "all": None,
+        "pending_payment": [Booking.Status.PENDING_PAYMENT],
+        "confirmed": [Booking.Status.CONFIRMED],
+        "ongoing": [Booking.Status.ONGOING],
+        "completed": [Booking.Status.COMPLETED],
+        "cancelled": [
+            Booking.Status.CANCELLED,
+            Booking.Status.PAYMENT_FAILED,
+            Booking.Status.EXPIRED,
+        ],
+    }
+
+    # Which status transitions a vendor may perform through this
+    # endpoint. PENDING_PAYMENT isn't listed as a source — it resolves
+    # itself via the payment webhook/expiry, not a vendor action.
+    # COMPLETED/CANCELLED/PAYMENT_FAILED/EXPIRED are all terminal.
+    #
+    # NOTE: the CONFIRMED -> CANCELLED path only flips status and
+    # records cancelled_at/cancelled_by_role — it does NOT run the
+    # refund/forfeiture calculation CancellationService does for
+    # customer-initiated cancellations, and does not create a
+    # BookingCancellation row. Vendor-initiated cancellations getting
+    # the same refund accounting is a separate follow-up piece.
+    ALLOWED_TRANSITIONS: dict[str, list[str]] = {
+        Booking.Status.CONFIRMED: [Booking.Status.ONGOING, Booking.Status.CANCELLED],
+        Booking.Status.ONGOING: [Booking.Status.COMPLETED],
+    }
+
+    @staticmethod
+    def statuses_for_tab(tab: str) -> tuple[list[str] | None, bool]:
+        """
+        Returns (statuses, is_valid_tab). statuses is None for both the
+        "all" tab and an invalid tab — callers must check is_valid_tab
+        before trusting a None as meaning "all".
+        """
+        tab = tab.lower()
+        if tab not in VendorBookingService.STATUS_FILTER_MAP:
+            return None, False
+        return VendorBookingService.STATUS_FILTER_MAP[tab], True
+
+    @staticmethod
+    def get_bookings_for_vendor(vendor_id: int, tab: str):
+        statuses, is_valid = VendorBookingService.statuses_for_tab(tab)
+        if not is_valid:
+            valid = ", ".join(VendorBookingService.STATUS_FILTER_MAP.keys())
+            return None, f"Invalid status filter. Must be one of: {valid}"
+        return (
+            VendorBookingRepository.get_bookings_for_vendor(vendor_id, statuses),
+            None,
+        )
+
+    @staticmethod
+    def get_booking_detail(booking_id: int, vendor_id: int):
+        return VendorBookingRepository.get_booking_by_id_for_vendor(
+            booking_id, vendor_id
+        )
+
+    @staticmethod
+    @transaction.atomic
+    def update_status(
+        booking_id: int, vendor_id: int, new_status: str, changed_by_user
+    ):
+        """
+        Returns (booking, None) on success, or (None, error_message).
+        Locks the booking row for the duration of the check+update so
+        two concurrent status-change requests can't both act on a
+        stale current status.
+        """
+        booking = (
+            Booking.objects.select_for_update()
+            .filter(id=booking_id, listing__vendor_id=vendor_id)
+            .first()
+        )
+        if booking is None:
+            return None, "Booking not found"
+
+        allowed_targets = VendorBookingService.ALLOWED_TRANSITIONS.get(
+            booking.status, []
+        )
+        if new_status not in allowed_targets:
+            return None, (
+                f"Cannot change status from '{booking.get_status_display()}' to "
+                f"'{new_status}'."
+            )
+
+        now = timezone.now()
+        if new_status == Booking.Status.ONGOING:
+            booking.handed_over_at = now
+            booking.handed_over_by = changed_by_user
+            booking.status = new_status
+            booking.save(update_fields=["status", "handed_over_at", "handed_over_by"])
+        elif new_status == Booking.Status.COMPLETED:
+            booking.returned_at = now
+            booking.return_confirmed_by = changed_by_user
+            booking.status = new_status
+            booking.save(update_fields=["status", "returned_at", "return_confirmed_by"])
+        elif new_status == Booking.Status.CANCELLED:
+            booking.cancelled_at = now
+            booking.cancelled_by_role = Booking.CancelledBy.VENDOR
+            booking.status = new_status
+            booking.save(update_fields=["status", "cancelled_at", "cancelled_by_role"])
+        else:
+            # Not reachable given ALLOWED_TRANSITIONS above — fail
+            # loudly rather than silently applying an unhandled
+            # transition with no side effects.
+            return None, f"Unhandled transition target '{new_status}'."
+
+        return booking, None

@@ -8,6 +8,9 @@ from apps.bookings.views import (
     BookingConfirmationView,
     BookingCancellationPreviewView,
     CancelBookingView,
+    VendorBookingsView,
+    VendorBookingDetailView,
+    VendorBookingStatusUpdateView,
 )
 
 urlpatterns = [
@@ -22,6 +25,17 @@ urlpatterns = [
         "confirmation/",
         BookingConfirmationView.as_view(),
         name="booking-confirmation",
+    ),
+    path("vendor/", VendorBookingsView.as_view(), name="vendor-bookings"),
+    path(
+        "vendor/<int:booking_id>/",
+        VendorBookingDetailView.as_view(),
+        name="vendor-booking-detail",
+    ),
+    path(
+        "vendor/<int:booking_id>/status/",
+        VendorBookingStatusUpdateView.as_view(),
+        name="vendor-booking-status-update",
     ),
     path("", CustomerBookingsView.as_view(), name="customer-bookings"),
     path(

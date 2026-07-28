@@ -7,11 +7,6 @@ class BookingRepository:
 
     @staticmethod
     def get_bookings_for_customer(customer, statuses: list[str]):
-        """
-        Returns the customer's bookings restricted to the given status
-        list, newest first (Booking.Meta.ordering already does this),
-        with everything the list/detail serializers need preloaded.
-        """
         return Booking.objects.filter(
             customer=customer, status__in=statuses
         ).select_related(
@@ -23,13 +18,6 @@ class BookingRepository:
 
     @staticmethod
     def get_booking_by_id_for_customer(booking_id: int, customer):
-        """
-        Single booking, scoped to the requesting customer so one user
-        can never fetch another user's booking by guessing an id.
-        Includes payments for the detail view's payment history, and
-        the cancellation record (if any) via select_related — it's a
-        OneToOne, so this is a single extra join rather than a query.
-        """
         return (
             Booking.objects.filter(id=booking_id, customer=customer)
             .select_related(
@@ -52,17 +40,6 @@ class BookingRepository:
 
     @staticmethod
     def get_bookings_by_group(group_id, customer):
-        """
-        Returns every Booking row sharing the given booking_group_id,
-        scoped to the requesting customer (so one customer can never
-        pull up another customer's confirmation by adjusting a group id
-        in the URL).
-
-        A bulk booking (quantity > 1 at checkout) creates multiple
-        Booking rows sharing one booking_group_id and one Payment —
-        this is what BookingConfirmationView fetches to show every
-        vehicle in the order, not just one.
-        """
         return (
             Booking.objects.filter(booking_group_id=group_id, customer=customer)
             .select_related(
@@ -76,11 +53,6 @@ class BookingRepository:
 
 
 class BookingCancellationRepository:
-    """
-    Distinct from apps.administrations.CancellationPolicyRepository,
-    which reads policy *configuration*. This one reads/writes the
-    per-booking cancellation *record* once a cancellation happens.
-    """
 
     @staticmethod
     def create_cancellation_record(**fields) -> BookingCancellation:
@@ -89,3 +61,46 @@ class BookingCancellationRepository:
     @staticmethod
     def get_cancellation_for_booking(booking_id: int):
         return BookingCancellation.objects.filter(booking_id=booking_id).first()
+
+
+class VendorBookingRepository:
+
+    @staticmethod
+    def get_bookings_for_vendor(vendor_id: int, statuses: list[str] | None = None):
+        """
+        Every booking whose listing belongs to this vendor, newest
+        first (Booking.Meta.ordering already sorts -created_at).
+        statuses=None returns every status — the "All" filter tab.
+        """
+        qs = Booking.objects.filter(listing__vendor_id=vendor_id).select_related(
+            "listing__vehicle_type",
+            "pickup_location",
+            "customer",
+            "pricing_package__package_type",
+        )
+        if statuses:
+            qs = qs.filter(status__in=statuses)
+        return qs
+
+    @staticmethod
+    def get_booking_by_id_for_vendor(booking_id: int, vendor_id: int):
+        """
+        Ownership enforced via listing__vendor_id in the filter itself
+        — a booking belonging to a different vendor's listing simply
+        doesn't match, same IDOR-safe pattern used throughout the fleet
+        endpoints.
+        """
+        return (
+            Booking.objects.filter(id=booking_id, listing__vendor_id=vendor_id)
+            .select_related(
+                "listing__vehicle_type",
+                "listing__vendor",
+                "pickup_location",
+                "customer",
+                "pricing_package__package_type",
+                "handed_over_by",
+                "return_confirmed_by",
+                "cancellation",
+            )
+            .first()
+        )

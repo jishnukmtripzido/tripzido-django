@@ -274,15 +274,14 @@ class User(AbstractBaseUser, PermissionsMixin, BaseModel):
     def has_role(self, role_name: str) -> bool:
         """
         Check whether the user currently holds a role with the given name.
-
-        Args:
-            role_name (str): The ``custom_name`` of the role to check.
-
-        Returns:
-            bool: ``True`` if at least one active assignment exists for
-                ``role_name``, ``False`` otherwise.
+        Checks both system_role and custom_name, since built-in roles
+        (VENDOR, CUSTOMER, SUPPORT, SUPER_ADMIN) are stored in
+        system_role, while custom_name is only for non-system roles.
         """
-        return self.role_assignments.filter(role__custom_name=role_name).exists()
+        return self.role_assignments.filter(
+            models.Q(role__system_role=role_name)
+            | models.Q(role__custom_name=role_name)
+        ).exists()
 
 
 class UserRoleAssignment(BaseModel):

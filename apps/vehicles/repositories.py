@@ -1,4 +1,5 @@
-from django.db.models import Prefetch, Avg, Count, Sum
+from django.db.models import Prefetch, Avg, Count, Sum, Max, Q
+from django.db import transaction
 from apps.vehicles.models import (
     VehicleImage,
     VehicleType,
@@ -8,10 +9,11 @@ from apps.vehicles.models import (
     OperatingScheduleTemplate,
     TemplateScheduleDay,
     VehicleReview,
+    PricingPackageType,
 )
 from apps.vendors.models import Vendor, VendorTerms, VendorSubscription
 from django.utils import timezone
-from datetime import datetime
+from datetime import datetime, time
 
 
 class VehicleSearchRepository:
@@ -456,3 +458,411 @@ class LocationTimingRepository:
             for d in TemplateScheduleDay.objects.filter(template_id=template_id)
         }
         return True, days
+
+
+class VendorFleetRepository:
+
+    @staticmethod
+    def get_listings_for_vendor(vendor_id: int):
+        """
+        Returns ALL of a vendor's listings regardless of status
+        (PENDING/APPROVED/PAUSED/SUSPENDED/REJECTED) — this is the
+        vendor managing their own inventory on the Fleet screen, not
+        the public search endpoint, so nothing should be hidden from
+        the owner (contrast with VehicleSearchRepository, which only
+        returns APPROVED listings from APPROVED vendors).
+        """
+        return (
+            VehicleListing.objects.filter(vendor_id=vendor_id)
+            .select_related("vehicle_type", "pickup_location")
+            .prefetch_related(
+                Prefetch(
+                    "images",
+                    queryset=VehicleImage.objects.order_by("sort_order"),
+                )
+            )
+            .order_by("-created_at")
+        )
+
+    @staticmethod
+    def get_listing_for_vendor(listing_id: int, vendor_id: int):
+        """
+        Fetches a single listing scoped to a specific vendor — the
+        vendor_id filter is a hard security boundary, not just a
+        convenience: without it, a vendor could view another vendor's
+        listing purely by guessing IDs (IDOR). This can't reuse
+        VehicleDetailRepository.get_listing_by_id, which only checks
+        status=APPROVED (the public customer-facing rule), not
+        ownership — a vendor needs to see their own PENDING/REJECTED/
+        SUSPENDED listings too.
+        """
+        return (
+            VehicleListing.objects.filter(id=listing_id, vendor_id=vendor_id)
+            .select_related(
+                "vehicle_type",
+                "pickup_location__city",
+                "schedule_template",
+            )
+            .prefetch_related(
+                Prefetch(
+                    "images",
+                    queryset=VehicleImage.objects.order_by("sort_order"),
+                ),
+                Prefetch(
+                    "pricing_packages",
+                    queryset=PricingPackage.objects.select_related(
+                        "package_type__category"
+                    ).order_by("package_type__sort_order"),
+                ),
+                Prefetch(
+                    "schedule_template__days",
+                    queryset=TemplateScheduleDay.objects.order_by("day_of_week"),
+                    to_attr="ordered_days",
+                ),
+            )
+            .first()
+        )
+
+    @staticmethod
+    @transaction.atomic
+    def create_listing(
+        vendor,
+        vehicle_type,
+        pickup_location,
+        schedule_template,
+        listing_fields: dict,
+        packages: list[dict],
+    ) -> VehicleListing:
+        listing = VehicleListing.objects.create(
+            vendor=vendor,
+            vehicle_type=vehicle_type,
+            pickup_location=pickup_location,
+            schedule_template=schedule_template,
+            **listing_fields,
+        )
+        # duration_hours is deliberately sourced from package_type, not
+        # taken as vendor input — every service that reads booking
+        # duration (AvailabilityService, VendorListingDetailService)
+        # already reads pkg.package_type.duration_hours, never
+        # pkg.duration_hours directly. Populating it from the same
+        # source keeps the field from silently diverging from what the
+        # rest of the app actually treats as the source of truth.
+        package_rows = [
+            PricingPackage(
+                listing=listing,
+                package_type=p["package_type"],
+                duration_hours=p["package_type"].duration_hours,
+                price=p["price"],
+                pay_at_pickup_enabled=p.get("pay_at_pickup_enabled", False),
+                partial_payment_percentage=p.get("partial_payment_percentage"),
+                km_limit=p.get("km_limit"),
+            )
+            for p in packages
+        ]
+        PricingPackage.objects.bulk_create(package_rows)
+        return listing
+
+    @staticmethod
+    def add_images(
+        listing: VehicleListing, files: list, uploaded_by
+    ) -> list[VehicleImage]:
+        """
+        Appends new images after whatever's already attached — sort_order
+        continues from the current max rather than restarting at 0, so
+        repeated upload calls don't collide with existing photos. The
+        first image ever attached to a listing is auto-marked
+        is_primary; every image after that defaults to False. There's
+        no "set primary" endpoint yet — if that's later deleted,
+        VendorFleetListingSerializer.get_primary_image already falls
+        back to the first image by sort_order, so nothing breaks, it
+        just picks a new de facto primary silently.
+        """
+        existing_count = listing.images.count()
+        max_sort_order = listing.images.aggregate(Max("sort_order"))["sort_order__max"]
+        next_sort_order = (max_sort_order + 1) if max_sort_order is not None else 0
+
+        rows = [
+            VehicleImage(
+                listing=listing,
+                image=f,
+                source=VehicleImage.ImageSource.VENDOR,
+                sort_order=next_sort_order + i,
+                is_primary=(existing_count == 0 and i == 0),
+                uploaded_by=uploaded_by,
+            )
+            for i, f in enumerate(files)
+        ]
+        return VehicleImage.objects.bulk_create(rows)
+
+    @staticmethod
+    def delete_image(listing_id: int, vendor_id: int, image_id: int) -> bool:
+        """
+        Ownership enforced via listing__vendor_id in the same filter as
+        the delete itself — a mismatched listing_id/image_id/vendor_id
+        combination deletes nothing rather than needing a separate
+        existence check first.
+        """
+        deleted, _ = VehicleImage.objects.filter(
+            id=image_id, listing_id=listing_id, listing__vendor_id=vendor_id
+        ).delete()
+        return deleted > 0
+
+    @staticmethod
+    @transaction.atomic
+    def update_listing(
+        listing: VehicleListing,
+        pickup_location,
+        schedule_template,
+        listing_fields: dict,
+        packages: list[dict],
+    ) -> VehicleListing:
+        for field, value in listing_fields.items():
+            setattr(listing, field, value)
+        listing.pickup_location = pickup_location
+        listing.schedule_template = schedule_template
+        # Every edit sends the listing back for re-review — clears a
+        # stale rejection message so the detail page doesn't show an
+        # old REJECTED reason next to a listing that's freshly PENDING.
+        listing.status = VehicleListing.Status.PENDING_APPROVAL
+        listing.rejection_reason = ""
+        listing.approved_by = None
+        listing.approved_at = None
+        listing.save()
+
+        # Full replace — same strategy as create, matches the edit
+        # form always submitting the complete current package list
+        # rather than a partial diff.
+        listing.pricing_packages.all().delete()
+        package_rows = [
+            PricingPackage(
+                listing=listing,
+                package_type=p["package_type"],
+                duration_hours=p["package_type"].duration_hours,
+                price=p["price"],
+                pay_at_pickup_enabled=p.get("pay_at_pickup_enabled", False),
+                partial_payment_percentage=p.get("partial_payment_percentage"),
+                km_limit=p.get("km_limit"),
+            )
+            for p in packages
+        ]
+        PricingPackage.objects.bulk_create(package_rows)
+        return listing
+
+
+class VehicleTypeRepository:
+
+    @staticmethod
+    def search(query: str | None = None):
+        """
+        Returns the full catalog regardless of is_published — that flag
+        gates customer search visibility, not whether a vendor may
+        create a listing against it. Confirm this reading if it
+        surfaces something unexpected in testing.
+        """
+        qs = VehicleType.objects.all().order_by("brand", "name")
+        if query:
+            qs = qs.filter(Q(name__icontains=query) | Q(brand__icontains=query))
+        return qs
+
+    @staticmethod
+    def get_by_id(vehicle_type_id: int):
+        return VehicleType.objects.filter(id=vehicle_type_id).first()
+
+
+class PackageTypeRepository:
+
+    @staticmethod
+    def get_all():
+        return PricingPackageType.objects.select_related("category").order_by(
+            "sort_order", "name"
+        )
+
+    @staticmethod
+    def get_by_ids(ids: list[int]) -> dict[int, "PricingPackageType"]:
+        return {pt.id: pt for pt in PricingPackageType.objects.filter(id__in=ids)}
+
+
+class ScheduleTemplateRepository:
+
+    @staticmethod
+    def get_for_vendor(vendor_id: int):
+        return (
+            OperatingScheduleTemplate.objects.filter(vendor_id=vendor_id)
+            .annotate(listings_count=Count("listings", distinct=True))
+            .prefetch_related(
+                Prefetch(
+                    "days",
+                    queryset=TemplateScheduleDay.objects.order_by("day_of_week"),
+                    to_attr="ordered_days",
+                )
+            )
+            .order_by("name")
+        )
+
+    @staticmethod
+    def get_detail_for_vendor(template_id: int, vendor_id: int):
+        return (
+            OperatingScheduleTemplate.objects.filter(
+                id=template_id, vendor_id=vendor_id
+            )
+            .annotate(listings_count=Count("listings", distinct=True))
+            .prefetch_related(
+                Prefetch(
+                    "days",
+                    queryset=TemplateScheduleDay.objects.order_by("day_of_week"),
+                    to_attr="ordered_days",
+                )
+            )
+            .first()
+        )
+
+    @staticmethod
+    @transaction.atomic
+    def update_for_vendor(
+        template_id: int, vendor_id: int, name: str, days_data: list[dict]
+    ):
+        template = OperatingScheduleTemplate.objects.filter(
+            id=template_id, vendor_id=vendor_id
+        ).first()
+        if template is None:
+            return None
+
+        template.name = name
+        template.save(update_fields=["name"])
+
+        template.days.all().delete()
+        days = [
+            TemplateScheduleDay(
+                template=template,
+                day_of_week=d["day_of_week"],
+                open_time=d.get("open_time") or time(7, 0),
+                close_time=d.get("close_time") or time(19, 0),
+                is_closed=d.get("is_closed", False),
+            )
+            for d in days_data
+        ]
+        TemplateScheduleDay.objects.bulk_create(days)
+        template.ordered_days = sorted(days, key=lambda d: d.day_of_week)
+        return template
+
+    @staticmethod
+    def delete_for_vendor(template_id: int, vendor_id: int) -> bool:
+        deleted, _ = OperatingScheduleTemplate.objects.filter(
+            id=template_id, vendor_id=vendor_id
+        ).delete()
+        return deleted > 0
+
+    @staticmethod
+    def get_owned_by_vendor(template_id: int, vendor_id: int):
+        # Ownership check happens here, at the query itself — a
+        # template_id belonging to a different vendor simply doesn't
+        # match this filter and comes back None, same "don't leak via
+        # ID guessing" principle as VendorFleetRepository.get_listing_for_vendor.
+        return OperatingScheduleTemplate.objects.filter(
+            id=template_id, vendor_id=vendor_id
+        ).first()
+
+    @staticmethod
+    @transaction.atomic
+    def create_for_vendor(vendor_id: int, name: str, days_data: list[dict]):
+        template = OperatingScheduleTemplate.objects.create(
+            vendor_id=vendor_id, name=name
+        )
+        days = [
+            TemplateScheduleDay(
+                template=template,
+                day_of_week=d["day_of_week"],
+                open_time=d.get("open_time") or time(7, 0),
+                close_time=d.get("close_time") or time(19, 0),
+                is_closed=d.get("is_closed", False),
+            )
+            for d in days_data
+        ]
+        TemplateScheduleDay.objects.bulk_create(days)
+        # Attach in sorted order so the response serializer doesn't
+        # need a second query to reload with the same prefetch shape
+        # get_for_vendor uses.
+        template.ordered_days = sorted(days, key=lambda d: d.day_of_week)
+        return template
+
+
+class VendorBlockedPeriodRepository:
+
+    @staticmethod
+    def get_for_vendor(vendor_id: int):
+        return (
+            ListingBlockedPeriod.objects.filter(listing__vendor_id=vendor_id)
+            .select_related("listing__vehicle_type", "listing__pickup_location")
+            .order_by("start_datetime")
+        )
+
+    @staticmethod
+    def get_by_id_for_vendor(block_id: int, vendor_id: int):
+        return (
+            ListingBlockedPeriod.objects.filter(
+                id=block_id, listing__vendor_id=vendor_id
+            )
+            .select_related("listing__vehicle_type", "listing__pickup_location")
+            .first()
+        )
+
+    @staticmethod
+    def create_block(
+        listing: VehicleListing,
+        count: int,
+        start_datetime,
+        end_datetime,
+        reason: str,
+        note: str,
+    ) -> ListingBlockedPeriod:
+        block = ListingBlockedPeriod(
+            listing=listing,
+            count=count,
+            start_datetime=start_datetime,
+            end_datetime=end_datetime,
+            reason=reason,
+            note=note,
+        )
+        # full_clean() runs the model's own clean() — order, count vs.
+        # available_count, and the no-overlap rule — on top of the
+        # future-date check the service layer already did before
+        # reaching here.
+        block.full_clean()
+        block.save()
+        return block
+
+    @staticmethod
+    def update_block(
+        block: ListingBlockedPeriod,
+        count: int,
+        start_datetime,
+        end_datetime,
+        reason: str | None = None,
+        note: str | None = None,
+    ) -> ListingBlockedPeriod:
+        block.count = count
+        block.start_datetime = start_datetime
+        block.end_datetime = end_datetime
+        if reason is not None:
+            block.reason = reason
+        if note is not None:
+            block.note = note
+        block.full_clean()
+        block.save()
+        return block
+
+    @staticmethod
+    def delete_block(block_id: int, vendor_id: int) -> bool:
+        """
+        Ownership enforced in the same filter as the delete itself —
+        same IDOR-safe pattern as VendorFleetRepository.delete_image.
+        No date/status restriction: removing a block only loosens an
+        availability constraint, it can never create an overlap or
+        violate fleet capacity, so there's nothing to validate beyond
+        ownership — unlike create/update, which both must guard against
+        conflicts a delete simply cannot cause.
+        """
+        deleted, _ = ListingBlockedPeriod.objects.filter(
+            id=block_id, listing__vendor_id=vendor_id
+        ).delete()
+        return deleted > 0

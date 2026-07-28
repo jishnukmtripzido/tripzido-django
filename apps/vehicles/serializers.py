@@ -10,6 +10,8 @@ from apps.vehicles.models import (
     VehicleType,
     VehicleImage,
     PricingPackage,
+    PricingPackageType,
+    ListingBlockedPeriod,
 )
 from apps.vehicles.utils import format_duration
 
@@ -385,3 +387,347 @@ class LocationTimingDaySerializer(serializers.Serializer):
 class LocationTimingSerializer(serializers.Serializer):
     has_schedule = serializers.BooleanField()
     days = LocationTimingDaySerializer(many=True)
+
+
+class VendorFleetListingSerializer(serializers.ModelSerializer):
+    """
+    One row per VehicleListing, for the vendor's own Fleet screen.
+    Deliberately NOT grouped by VehicleType like
+    VehicleSearchResultSerializer/ListingLocationSerializer — those
+    group listings for marketplace browsing, but here the vendor is
+    managing individual units they own, so each listing is its own row.
+    """
+
+    name = serializers.CharField(source="vehicle_type.name")
+    brand = serializers.CharField(source="vehicle_type.brand")
+    vehicle_type = serializers.CharField(source="vehicle_type.vehicle_type")
+    location_name = serializers.CharField(source="pickup_location.name")
+    quantity = serializers.IntegerField(source="available_count")
+    primary_image = serializers.SerializerMethodField()
+
+    class Meta:
+        model = VehicleListing
+        fields = [
+            "id",
+            "name",
+            "brand",
+            "vehicle_type",
+            "location_name",
+            "quantity",
+            "status",
+            "primary_image",
+        ]
+
+    def get_primary_image(self, listing):
+        request = self.context.get("request")
+        # List rows always show the catalog VehicleType photo — every
+        # listing of "Yamaha Fascino" looks identical in the list
+        # regardless of which unit has vendor-uploaded photos attached.
+        # Falls back to the listing's own uploaded image only if the
+        # catalog entry itself has no photo (an incomplete admin entry,
+        # not something a vendor should ever hit in practice).
+        if listing.vehicle_type.primary_image:
+            url = listing.vehicle_type.primary_image.url
+        else:
+            images = list(listing.images.all())  # already prefetched — no extra query
+            image = next((img for img in images if img.is_primary), None) or (
+                images[0] if images else None
+            )
+            if image is None:
+                return None
+            url = image.image.url
+        return request.build_absolute_uri(url) if request else url
+
+
+class VendorListingVehicleTypeSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    name = serializers.CharField()
+    brand = serializers.CharField()
+    make_year = serializers.IntegerField()
+    transmission_type = serializers.CharField()
+    fuel_type = serializers.CharField()
+    vehicle_type = serializers.CharField()
+    seats = serializers.IntegerField()
+    cc = serializers.IntegerField()
+    mileage_kmpl = serializers.FloatField(allow_null=True)
+    top_speed_kmph = serializers.IntegerField(allow_null=True)
+    fuel_capacity_litres = serializers.FloatField(allow_null=True)
+    weight_kg = serializers.FloatField(allow_null=True)
+    primary_image = serializers.CharField(allow_null=True)
+
+
+class VendorListingPickupLocationSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    name = serializers.CharField()
+    address = serializers.CharField(allow_blank=True)
+    city_id = serializers.IntegerField()
+    city_name = serializers.CharField()
+    latitude = serializers.FloatField(allow_null=True)
+    longitude = serializers.FloatField(allow_null=True)
+
+
+class VendorListingImageDetailSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    image_url = serializers.CharField(allow_null=True)
+    is_primary = serializers.BooleanField()
+    sort_order = serializers.IntegerField()
+
+
+class VendorListingPackageDetailSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    package_type_id = serializers.IntegerField()  # NEW
+    name = serializers.CharField()
+    category = serializers.CharField()
+    duration_hours = serializers.DecimalField(max_digits=5, decimal_places=2)
+    price = serializers.DecimalField(max_digits=10, decimal_places=2)
+    pay_at_pickup_enabled = serializers.BooleanField()
+    partial_payment_percentage = serializers.DecimalField(
+        max_digits=5, decimal_places=2, allow_null=True
+    )
+    km_limit = serializers.IntegerField(allow_null=True)
+
+
+class VendorListingScheduleDaySerializer(serializers.Serializer):
+    day_of_week = serializers.IntegerField()
+    day_name = serializers.CharField()
+    is_closed = serializers.BooleanField()
+    open_time = serializers.CharField(allow_null=True)
+    close_time = serializers.CharField(allow_null=True)
+    timing = serializers.CharField()
+
+
+class VendorListingScheduleSerializer(serializers.Serializer):
+    has_schedule = serializers.BooleanField()
+    id = serializers.IntegerField(allow_null=True)  # NEW
+    template_name = serializers.CharField(allow_null=True)
+    days = VendorListingScheduleDaySerializer(many=True)
+
+
+class VendorListingPoliciesSerializer(serializers.Serializer):
+    security_deposit_amount = serializers.FloatField()
+    km_limit_per_day = serializers.IntegerField(allow_null=True)
+    excess_charge_per_km = serializers.FloatField(allow_null=True)
+    late_return_penalty_per_hour = serializers.FloatField(allow_null=True)
+    doorstep_delivery_enabled = serializers.BooleanField()
+    operating_hours_start = serializers.CharField(allow_null=True)
+    operating_hours_end = serializers.CharField(allow_null=True)
+
+
+class VendorListingDetailSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    status = serializers.CharField()
+    rejection_reason = serializers.CharField(allow_blank=True)
+    available_count = serializers.IntegerField()
+    vehicle_type = VendorListingVehicleTypeSerializer()
+    pickup_location = VendorListingPickupLocationSerializer()
+    images = VendorListingImageDetailSerializer(many=True)
+    pricing_packages = VendorListingPackageDetailSerializer(many=True)
+    schedule = VendorListingScheduleSerializer()
+    policies = VendorListingPoliciesSerializer()
+    created_at = serializers.DateTimeField()
+
+
+class VehicleTypeOptionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = VehicleType
+        fields = [
+            "id",
+            "name",
+            "brand",
+            "make_year",
+            "transmission_type",
+            "fuel_type",
+            "vehicle_type",
+            "seats",
+            "cc",
+            "primary_image",
+        ]
+
+
+class PackageTypeOptionSerializer(serializers.ModelSerializer):
+    category = serializers.CharField(source="category.name")
+
+    class Meta:
+        model = PricingPackageType
+        fields = ["id", "name", "category", "duration_hours"]
+
+
+class ScheduleTemplateDayInputSerializer(serializers.Serializer):
+    day_of_week = serializers.IntegerField(min_value=0, max_value=6)
+    is_closed = serializers.BooleanField(default=False)
+    open_time = serializers.TimeField(required=False, allow_null=True)
+    close_time = serializers.TimeField(required=False, allow_null=True)
+
+
+class ScheduleTemplateCreateSerializer(serializers.Serializer):
+    name = serializers.CharField(max_length=100)
+    days = ScheduleTemplateDayInputSerializer(many=True)
+
+    def validate_days(self, value):
+        seen = {d["day_of_week"] for d in value}
+        if len(seen) != len(value):
+            raise serializers.ValidationError("Duplicate day_of_week entries.")
+        return value
+
+
+class ScheduleTemplateDayOutputSerializer(serializers.Serializer):
+    day_of_week = serializers.IntegerField()
+    is_closed = serializers.BooleanField()
+    open_time = serializers.TimeField(allow_null=True)
+    close_time = serializers.TimeField(allow_null=True)
+
+
+class ScheduleTemplateSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    name = serializers.CharField()
+    listings_count = serializers.SerializerMethodField()
+    days = serializers.SerializerMethodField()
+
+    def get_listings_count(self, template):
+        # 0 for a template that was just created in-memory (not yet
+        # re-fetched via the annotated queryset) — correct either way,
+        # since a brand-new template genuinely has zero listings.
+        return getattr(template, "listings_count", 0)
+
+    def get_days(self, template):
+        days = getattr(template, "ordered_days", [])
+        return ScheduleTemplateDayOutputSerializer(days, many=True).data
+
+
+class VendorPricingPackageInputSerializer(serializers.Serializer):
+    package_type_id = serializers.IntegerField()
+    price = serializers.DecimalField(max_digits=10, decimal_places=2, min_value=0)
+    pay_at_pickup_enabled = serializers.BooleanField(default=False)
+    partial_payment_percentage = serializers.DecimalField(
+        max_digits=5, decimal_places=2, required=False, allow_null=True
+    )
+    km_limit = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+
+
+class VendorListingCreateSerializer(serializers.Serializer):
+    vehicle_type_id = serializers.IntegerField()
+    pickup_location_id = serializers.IntegerField()
+    schedule_template_id = serializers.IntegerField()
+    available_count = serializers.IntegerField(min_value=1, default=1)
+    security_deposit_amount = serializers.DecimalField(
+        max_digits=10, decimal_places=2, min_value=0, default=0
+    )
+    km_limit_per_day = serializers.IntegerField(
+        required=False, allow_null=True, min_value=1
+    )
+    excess_charge_per_km = serializers.DecimalField(
+        max_digits=8, decimal_places=2, required=False, allow_null=True, min_value=0
+    )
+    late_return_penalty_per_hour = serializers.DecimalField(
+        max_digits=8, decimal_places=2, required=False, allow_null=True, min_value=0
+    )
+    doorstep_delivery_enabled = serializers.BooleanField(default=False)
+    operating_hours_start = serializers.TimeField(required=False, allow_null=True)
+    operating_hours_end = serializers.TimeField(required=False, allow_null=True)
+    pricing_packages = VendorPricingPackageInputSerializer(many=True)
+
+    def validate_pricing_packages(self, value):
+        if not value:
+            raise serializers.ValidationError(
+                "At least one pricing package is required."
+            )
+        ids = [p["package_type_id"] for p in value]
+        if len(ids) != len(set(ids)):
+            raise serializers.ValidationError(
+                "Duplicate package_type_id in pricing_packages."
+            )
+        return value
+
+
+class VendorListingUpdateSerializer(serializers.Serializer):
+    pickup_location_id = serializers.IntegerField()
+    schedule_template_id = serializers.IntegerField()
+    available_count = serializers.IntegerField(min_value=1, default=1)
+    security_deposit_amount = serializers.DecimalField(
+        max_digits=10, decimal_places=2, min_value=0, default=0
+    )
+    km_limit_per_day = serializers.IntegerField(
+        required=False, allow_null=True, min_value=1
+    )
+    excess_charge_per_km = serializers.DecimalField(
+        max_digits=8, decimal_places=2, required=False, allow_null=True, min_value=0
+    )
+    late_return_penalty_per_hour = serializers.DecimalField(
+        max_digits=8, decimal_places=2, required=False, allow_null=True, min_value=0
+    )
+    doorstep_delivery_enabled = serializers.BooleanField(default=False)
+    operating_hours_start = serializers.TimeField(required=False, allow_null=True)
+    operating_hours_end = serializers.TimeField(required=False, allow_null=True)
+    pricing_packages = VendorPricingPackageInputSerializer(many=True)
+
+    def validate_pricing_packages(self, value):
+        if not value:
+            raise serializers.ValidationError(
+                "At least one pricing package is required."
+            )
+        ids = [p["package_type_id"] for p in value]
+        if len(ids) != len(set(ids)):
+            raise serializers.ValidationError(
+                "Duplicate package_type_id in pricing_packages."
+            )
+        return value
+
+
+class VendorBlockedPeriodListSerializer(serializers.ModelSerializer):
+    vehicle_name = serializers.CharField(source="listing.vehicle_type.name")
+    location_name = serializers.CharField(source="listing.pickup_location.name")
+    listing_id = serializers.IntegerField(source="listing.id")
+    listing_available_count = serializers.IntegerField(source="listing.available_count")
+    reason_label = serializers.CharField(source="get_reason_display")
+
+    class Meta:
+        model = ListingBlockedPeriod
+        fields = [
+            "id",
+            "listing_id",
+            "vehicle_name",
+            "location_name",
+            "start_datetime",
+            "end_datetime",
+            "count",
+            "listing_available_count",
+            "reason",
+            "reason_label",
+            "note",
+            "created_at",
+        ]
+
+
+class VendorBlockedPeriodCreateSerializer(serializers.Serializer):
+    listing_id = serializers.IntegerField()
+    start_datetime = serializers.DateTimeField()
+    end_datetime = serializers.DateTimeField()
+    count = serializers.IntegerField(min_value=1)
+    reason = serializers.ChoiceField(
+        choices=ListingBlockedPeriod.BlockReason.choices, default="OTHER"
+    )
+    note = serializers.CharField(required=False, allow_blank=True, default="")
+
+    def validate(self, attrs):
+        if attrs["end_datetime"] <= attrs["start_datetime"]:
+            raise serializers.ValidationError(
+                {"end_datetime": "End date/time must be after start date/time."}
+            )
+        return attrs
+
+
+class VendorBlockedPeriodUpdateSerializer(serializers.Serializer):
+    start_datetime = serializers.DateTimeField()
+    end_datetime = serializers.DateTimeField()
+    count = serializers.IntegerField(min_value=1)
+    reason = serializers.ChoiceField(
+        choices=ListingBlockedPeriod.BlockReason.choices, required=False
+    )
+    note = serializers.CharField(required=False, allow_blank=True)
+
+    def validate(self, attrs):
+        if attrs["end_datetime"] <= attrs["start_datetime"]:
+            raise serializers.ValidationError(
+                {"end_datetime": "End date/time must be after start date/time."}
+            )
+        return attrs

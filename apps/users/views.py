@@ -38,6 +38,12 @@ from .repositories import normalize_phone  # shared helper — single source of 
 class SendOTPView(APIView):
     permission_classes = [AllowAny]
 
+    # Set on a subclass to restrict this endpoint to accounts holding a
+    # specific role. Left None here so the existing customer-facing
+    # endpoint stays open to any registered user — do not set this on
+    # SendOTPView itself, only on subclasses like VendorSendOTPView.
+    required_role: str | None = None
+
     @extend_schema(
         request=SendOTPSerializer,
         description="Sends an OTP to the provided phone number.",
@@ -60,12 +66,8 @@ class SendOTPView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Normalise to local number — consistent with DB storage
         local_number, _ = normalize_phone(phone_number)
 
-        # ==========================================
-        # 1. CLOUDFLARE TURNSTILE VERIFICATION
-        # ==========================================
         if not turnstile_token:
             return error_response(
                 message="Bot verification token is missing.",
@@ -95,11 +97,7 @@ class SendOTPView(APIView):
                 errors={},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
-        # ==========================================
-        # END VERIFICATION
-        # ==========================================
 
-        # DB lookup uses local number
         user = UserService.get_user_by_phone(local_number)
         if not user:
             return error_response(
@@ -108,15 +106,19 @@ class SendOTPView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        # Generate a random 4-digit OTP
+        # ── Role gate — only enforced when a subclass sets required_role ──
+        if self.required_role and not user.has_role(self.required_role):
+            return error_response(
+                message="This phone number is not registered as a vendor account.",
+                errors={"phone_number": ["No vendor account found for this number."]},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         # otp = str(random.randint(1000, 9999))
         otp = "1211"
         print(f"Generated OTP for {local_number}: {otp}")  # Remove in production
 
-        # Cache key uses local number — same format as DB
         cache.set(f"otp_{local_number}", otp, timeout=300)
-
-        # Pass full E.164 to SMS gateway so the carrier can route it
         send_otp_sms.delay(phone_number, otp)
 
         return success_response(
@@ -130,6 +132,7 @@ class OTPVerifyAndTokenView(APIView):
     """
 
     permission_classes = [AllowAny]
+    required_role: str | None = None
 
     @extend_schema(
         request=VerifyOTPSerializer,
@@ -146,11 +149,8 @@ class OTPVerifyAndTokenView(APIView):
 
         phone_number = serializer.validated_data.get("phone_number")
         otp = request.data.get("otp")
-
-        # Normalise — caller may send "+919876543210" or "9876543210"
         local_number, _ = normalize_phone(phone_number)
 
-        # 1. verify OTP — fetch the stored code from Redis
         cached_otp = cache.get(f"otp_{local_number}")
         if cached_otp is None:
             return error_response(
@@ -166,7 +166,6 @@ class OTPVerifyAndTokenView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # 2. fetch user
         user = UserService.get_user_by_phone(local_number)
         if not user:
             return error_response(
@@ -175,10 +174,20 @@ class OTPVerifyAndTokenView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        # Consume OTP so it cannot be replayed
-        cache.delete(f"otp_{local_number}")
+        # ── Role gate ── checked here too, not just send-otp: an OTP
+        # cached by the *customer* send-otp endpoint (no role check)
+        # would otherwise still verify successfully here and hand out
+        # tokens to a non-vendor. Also consume the OTP on rejection so
+        # a valid code isn't left sitting in cache for this number.
+        if self.required_role and not user.has_role(self.required_role):
+            cache.delete(f"otp_{local_number}")
+            return error_response(
+                message="This phone number is not registered as a vendor account.",
+                errors={"phone_number": ["No vendor account found for this number."]},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
-        # 3. issue tokens
+        cache.delete(f"otp_{local_number}")
         refresh = RefreshToken.for_user(user)
 
         return success_response(
@@ -189,6 +198,21 @@ class OTPVerifyAndTokenView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+# ── Vendor portal — same logic, gated to VENDOR-role accounts ──────────────
+
+
+class VendorSendOTPView(SendOTPView):
+    """POST /api/users/vendor/send-otp/"""
+
+    required_role = "VENDOR"
+
+
+class VendorVerifyOTPView(OTPVerifyAndTokenView):
+    """POST /api/users/vendor/verify-otp/"""
+
+    required_role = "VENDOR"
 
 
 class LogoutView(APIView):

@@ -7,7 +7,16 @@ from apps.vehicles.repositories import (
     AvailabilityRepository,
     VehicleDetailRepository,
     LocationTimingRepository,
+    VendorFleetRepository,
+    VehicleTypeRepository,
+    PackageTypeRepository,
+    ScheduleTemplateRepository,
+    VendorBlockedPeriodRepository,
 )
+from django.db import transaction
+from django.core.exceptions import ValidationError
+from apps.locations.services import PickupLocationService
+from django.utils import timezone
 from apps.vehicles.utils import format_duration
 
 
@@ -841,3 +850,441 @@ class LocationTimingService:
                 )
 
         return {"has_schedule": True, "days": result}
+
+
+class VendorFleetService:
+
+    @staticmethod
+    def get_fleet_for_vendor(vendor_id: int):
+        return VendorFleetRepository.get_listings_for_vendor(vendor_id)
+
+
+class VendorListingDetailService:
+
+    @staticmethod
+    def _build_schedule(listing) -> dict:
+        template = listing.schedule_template
+        if template is None:
+            return {
+                "has_schedule": False,
+                "id": None,
+                "template_name": None,
+                "days": [],
+            }
+
+        days_by_number = {
+            d.day_of_week: d for d in getattr(template, "ordered_days", [])
+        }
+        days = []
+        for day_of_week in range(7):
+            day = days_by_number.get(day_of_week)
+            if day is None or day.is_closed:
+                days.append(
+                    {
+                        "day_of_week": day_of_week,
+                        "day_name": LocationTimingService.DAY_NAMES[day_of_week],
+                        "is_closed": True,
+                        "open_time": None,
+                        "close_time": None,
+                        "timing": "Closed",
+                    }
+                )
+            else:
+                days.append(
+                    {
+                        "day_of_week": day_of_week,
+                        "day_name": LocationTimingService.DAY_NAMES[day_of_week],
+                        "is_closed": False,
+                        "open_time": day.open_time.strftime("%H:%M"),
+                        "close_time": day.close_time.strftime("%H:%M"),
+                        "timing": (
+                            f"{LocationTimingService._format_time(day.open_time)} - "
+                            f"{LocationTimingService._format_time(day.close_time)}"
+                        ),
+                    }
+                )
+        # NEW: "id" added so the edit form can pre-select this template
+        # in its dropdown — previously only the display name was returned.
+        return {
+            "has_schedule": True,
+            "id": template.id,
+            "template_name": template.name,
+            "days": days,
+        }
+
+    @staticmethod
+    def _absolute_url(request, image_field):
+        if not image_field:
+            return None
+        url = image_field.url
+        return request.build_absolute_uri(url) if request else url
+
+    @staticmethod
+    def get_detail(listing_id: int, vendor_id: int, request=None) -> dict | None:
+        listing = VendorFleetRepository.get_listing_for_vendor(listing_id, vendor_id)
+        if listing is None:
+            return None
+
+        vt = listing.vehicle_type
+        location = listing.pickup_location
+
+        images = [
+            {
+                "id": img.pk,
+                "image_url": VendorListingDetailService._absolute_url(
+                    request, img.image
+                ),
+                "is_primary": img.is_primary,
+                "sort_order": img.sort_order,
+            }
+            for img in listing.images.all()
+        ]
+
+        packages = [
+            {
+                "id": pkg.pk,
+                "package_type_id": pkg.package_type_id,  # NEW
+                "name": pkg.package_type.name,
+                "category": pkg.package_type.category.name,
+                "duration_hours": pkg.package_type.duration_hours,
+                "price": pkg.price,
+                "pay_at_pickup_enabled": pkg.pay_at_pickup_enabled,
+                "partial_payment_percentage": pkg.partial_payment_percentage,
+                "km_limit": pkg.km_limit,
+            }
+            for pkg in listing.pricing_packages.all()
+        ]
+
+        return {
+            "id": listing.pk,
+            "status": listing.status,
+            "rejection_reason": listing.rejection_reason,
+            "available_count": listing.available_count,
+            "vehicle_type": {
+                "id": vt.pk,
+                "name": vt.name,
+                "brand": vt.brand,
+                "make_year": vt.make_year,
+                "transmission_type": vt.transmission_type,
+                "fuel_type": vt.fuel_type,
+                "vehicle_type": vt.vehicle_type,
+                "seats": vt.seats,
+                "cc": vt.cc,
+                "mileage_kmpl": float(vt.mileage_kmpl) if vt.mileage_kmpl else None,
+                "top_speed_kmph": vt.top_speed_kmph,
+                "fuel_capacity_litres": (
+                    float(vt.fuel_capacity_litres) if vt.fuel_capacity_litres else None
+                ),
+                "weight_kg": float(vt.weight_kg) if vt.weight_kg else None,
+                "primary_image": VendorListingDetailService._absolute_url(
+                    request, vt.primary_image
+                ),
+            },
+            "pickup_location": {
+                "id": location.pk,
+                "name": location.name,
+                "address": location.address,
+                "city_id": location.city_id,
+                "city_name": location.city.name,
+                "latitude": float(location.latitude) if location.latitude else None,
+                "longitude": float(location.longitude) if location.longitude else None,
+            },
+            "images": images,
+            "pricing_packages": packages,
+            "schedule": VendorListingDetailService._build_schedule(listing),
+            "policies": {
+                "security_deposit_amount": float(listing.security_deposit_amount),
+                "km_limit_per_day": listing.km_limit_per_day,
+                "excess_charge_per_km": (
+                    float(listing.excess_charge_per_km)
+                    if listing.excess_charge_per_km
+                    else None
+                ),
+                "late_return_penalty_per_hour": (
+                    float(listing.late_return_penalty_per_hour)
+                    if listing.late_return_penalty_per_hour
+                    else None
+                ),
+                "doorstep_delivery_enabled": listing.doorstep_delivery_enabled,
+                "operating_hours_start": (
+                    listing.operating_hours_start.strftime("%H:%M")
+                    if listing.operating_hours_start
+                    else None
+                ),
+                "operating_hours_end": (
+                    listing.operating_hours_end.strftime("%H:%M")
+                    if listing.operating_hours_end
+                    else None
+                ),
+            },
+            "created_at": listing.created_at,
+        }
+
+
+class VehicleTypeService:
+
+    @staticmethod
+    def search(query: str | None = None):
+        return VehicleTypeRepository.search(query)
+
+
+class PackageTypeService:
+
+    @staticmethod
+    def get_all():
+        return PackageTypeRepository.get_all()
+
+
+class ScheduleTemplateService:
+
+    @staticmethod
+    def get_for_vendor(vendor_id: int):
+        return ScheduleTemplateRepository.get_for_vendor(vendor_id)
+
+    @staticmethod
+    def create_for_vendor(vendor_id: int, name: str, days_data: list[dict]):
+        return ScheduleTemplateRepository.create_for_vendor(vendor_id, name, days_data)
+
+    @staticmethod
+    def get_detail_for_vendor(template_id: int, vendor_id: int):
+        return ScheduleTemplateRepository.get_detail_for_vendor(template_id, vendor_id)
+
+    @staticmethod
+    def update_for_vendor(
+        template_id: int, vendor_id: int, name: str, days_data: list[dict]
+    ):
+        return ScheduleTemplateRepository.update_for_vendor(
+            template_id, vendor_id, name, days_data
+        )
+
+    @staticmethod
+    def delete_for_vendor(template_id: int, vendor_id: int) -> bool:
+        return ScheduleTemplateRepository.delete_for_vendor(template_id, vendor_id)
+
+
+class VendorListingCreateService:
+
+    @staticmethod
+    @transaction.atomic
+    def create_listing(vendor, validated_data: dict) -> VehicleListing:
+        vehicle_type = VehicleTypeRepository.get_by_id(
+            validated_data["vehicle_type_id"]
+        )
+        if vehicle_type is None:
+            raise ValidationError({"vehicle_type_id": "Vehicle type not found."})
+
+        try:
+            pickup_location = PickupLocationService.get_by_id(
+                validated_data["pickup_location_id"]
+            )
+        except ValidationError:
+            raise ValidationError({"pickup_location_id": "Pickup location not found."})
+
+        schedule_template = ScheduleTemplateRepository.get_owned_by_vendor(
+            validated_data["schedule_template_id"], vendor.id
+        )
+        if schedule_template is None:
+            raise ValidationError(
+                {"schedule_template_id": "Schedule template not found for this vendor."}
+            )
+
+        pricing_input = validated_data["pricing_packages"]
+        package_type_ids = [p["package_type_id"] for p in pricing_input]
+        package_types = PackageTypeRepository.get_by_ids(package_type_ids)
+        missing = set(package_type_ids) - set(package_types.keys())
+        if missing:
+            raise ValidationError(
+                {"pricing_packages": f"Unknown package type id(s): {sorted(missing)}"}
+            )
+
+        packages = [
+            {
+                "package_type": package_types[p["package_type_id"]],
+                "price": p["price"],
+                "pay_at_pickup_enabled": p.get("pay_at_pickup_enabled", False),
+                "partial_payment_percentage": p.get("partial_payment_percentage"),
+                "km_limit": p.get("km_limit"),
+            }
+            for p in pricing_input
+        ]
+
+        listing_fields = {
+            "available_count": validated_data.get("available_count", 1),
+            "security_deposit_amount": validated_data.get("security_deposit_amount", 0),
+            "km_limit_per_day": validated_data.get("km_limit_per_day"),
+            "excess_charge_per_km": validated_data.get("excess_charge_per_km"),
+            "late_return_penalty_per_hour": validated_data.get(
+                "late_return_penalty_per_hour"
+            ),
+            "doorstep_delivery_enabled": validated_data.get(
+                "doorstep_delivery_enabled", False
+            ),
+            "operating_hours_start": validated_data.get("operating_hours_start"),
+            "operating_hours_end": validated_data.get("operating_hours_end"),
+        }
+
+        return VendorFleetRepository.create_listing(
+            vendor,
+            vehicle_type,
+            pickup_location,
+            schedule_template,
+            listing_fields,
+            packages,
+        )
+
+
+class VendorListingImageService:
+
+    @staticmethod
+    def add_images(listing_id: int, vendor_id: int, files: list, uploaded_by):
+        listing = VendorFleetRepository.get_listing_for_vendor(listing_id, vendor_id)
+        if listing is None:
+            return None
+        return VendorFleetRepository.add_images(listing, files, uploaded_by)
+
+    @staticmethod
+    def delete_image(listing_id: int, vendor_id: int, image_id: int) -> bool:
+        return VendorFleetRepository.delete_image(listing_id, vendor_id, image_id)
+
+
+class VendorListingUpdateService:
+
+    @staticmethod
+    @transaction.atomic
+    def update_listing(listing_id: int, vendor, validated_data: dict):
+        listing = VendorFleetRepository.get_listing_for_vendor(listing_id, vendor.id)
+        if listing is None:
+            return None
+
+        try:
+            pickup_location = PickupLocationService.get_by_id(
+                validated_data["pickup_location_id"]
+            )
+        except ValidationError:
+            raise ValidationError({"pickup_location_id": "Pickup location not found."})
+
+        schedule_template = ScheduleTemplateRepository.get_owned_by_vendor(
+            validated_data["schedule_template_id"], vendor.id
+        )
+        if schedule_template is None:
+            raise ValidationError(
+                {"schedule_template_id": "Schedule template not found for this vendor."}
+            )
+
+        pricing_input = validated_data["pricing_packages"]
+        package_type_ids = [p["package_type_id"] for p in pricing_input]
+        package_types = PackageTypeRepository.get_by_ids(package_type_ids)
+        missing = set(package_type_ids) - set(package_types.keys())
+        if missing:
+            raise ValidationError(
+                {"pricing_packages": f"Unknown package type id(s): {sorted(missing)}"}
+            )
+
+        packages = [
+            {
+                "package_type": package_types[p["package_type_id"]],
+                "price": p["price"],
+                "pay_at_pickup_enabled": p.get("pay_at_pickup_enabled", False),
+                "partial_payment_percentage": p.get("partial_payment_percentage"),
+                "km_limit": p.get("km_limit"),
+            }
+            for p in pricing_input
+        ]
+
+        listing_fields = {
+            "available_count": validated_data.get("available_count", 1),
+            "security_deposit_amount": validated_data.get("security_deposit_amount", 0),
+            "km_limit_per_day": validated_data.get("km_limit_per_day"),
+            "excess_charge_per_km": validated_data.get("excess_charge_per_km"),
+            "late_return_penalty_per_hour": validated_data.get(
+                "late_return_penalty_per_hour"
+            ),
+            "doorstep_delivery_enabled": validated_data.get(
+                "doorstep_delivery_enabled", False
+            ),
+            "operating_hours_start": validated_data.get("operating_hours_start"),
+            "operating_hours_end": validated_data.get("operating_hours_end"),
+        }
+
+        return VendorFleetRepository.update_listing(
+            listing, pickup_location, schedule_template, listing_fields, packages
+        )
+
+
+class VendorBlockedPeriodService:
+
+    @staticmethod
+    def get_for_vendor(vendor_id: int):
+        return VendorBlockedPeriodRepository.get_for_vendor(vendor_id)
+
+    @staticmethod
+    def get_block_detail(block_id: int, vendor_id: int):
+        return VendorBlockedPeriodRepository.get_by_id_for_vendor(block_id, vendor_id)
+
+    @staticmethod
+    def create_block(vendor_id: int, validated_data: dict):
+        """
+        Ownership and the "must start in the future" rule are checked
+        here, before ever touching the model. The model's own clean()
+        (order, count vs. available_count, no overlap) still runs via
+        full_clean() inside the repository — both layers raise the
+        same django.core.exceptions.ValidationError, so the view's
+        single except block already handles either source.
+        """
+        listing = VendorFleetRepository.get_listing_for_vendor(
+            validated_data["listing_id"], vendor_id
+        )
+        if listing is None:
+            raise ValidationError({"listing_id": "Listing not found for this vendor."})
+
+        if validated_data["start_datetime"] <= timezone.now():
+            raise ValidationError(
+                {"start_datetime": "Start date/time must be in the future."}
+            )
+
+        return VendorBlockedPeriodRepository.create_block(
+            listing=listing,
+            count=validated_data["count"],
+            start_datetime=validated_data["start_datetime"],
+            end_datetime=validated_data["end_datetime"],
+            reason=validated_data.get("reason", "OTHER"),
+            note=validated_data.get("note", ""),
+        )
+
+    @staticmethod
+    def update_block(block_id: int, vendor_id: int, validated_data: dict):
+        """
+        Returns the updated block, or None if not found/not owned by
+        this vendor.
+
+        Checks end_datetime (not start_datetime) against "now" — unlike
+        create, an edit is allowed on a block whose start has already
+        passed (e.g. bumping the count or extending the end date on an
+        already-active block), as long as the block, as edited, still
+        has some future portion remaining. Swap this for the same
+        start_datetime > now() check create uses if you'd rather block
+        all edits once a block has started.
+        """
+        block = VendorBlockedPeriodRepository.get_by_id_for_vendor(block_id, vendor_id)
+        if block is None:
+            return None
+
+        if validated_data["end_datetime"] <= timezone.now():
+            raise ValidationError(
+                {
+                    "end_datetime": "End date/time must be in the future to edit this block."
+                }
+            )
+
+        return VendorBlockedPeriodRepository.update_block(
+            block,
+            count=validated_data["count"],
+            start_datetime=validated_data["start_datetime"],
+            end_datetime=validated_data["end_datetime"],
+            reason=validated_data.get("reason"),
+            note=validated_data.get("note"),
+        )
+
+    @staticmethod
+    def delete_block(block_id: int, vendor_id: int) -> bool:
+        return VendorBlockedPeriodRepository.delete_block(block_id, vendor_id)

@@ -421,3 +421,188 @@ class BookingConfirmationSerializer(serializers.Serializer):
     total_deposit = serializers.FloatField()
     vehicle_count = serializers.IntegerField()
     bookings = BookingConfirmationItemSerializer(many=True)
+
+
+class VendorBookingListSerializer(serializers.ModelSerializer):
+    """One card per booking, for the vendor's own Bookings list."""
+
+    vehicle_name = serializers.CharField(source="listing.vehicle_type.name")
+    vehicle_image = serializers.SerializerMethodField()
+    customer_name = serializers.SerializerMethodField()
+    customer_phone = serializers.CharField(source="customer.phone_number")
+    location_name = serializers.CharField(source="pickup_location.name")
+    start_date = serializers.SerializerMethodField()
+    end_date = serializers.SerializerMethodField()
+    duration = serializers.SerializerMethodField()
+    status_label = serializers.CharField(source="get_status_display")
+    available_next_statuses = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Booking
+        fields = [
+            "id",
+            "booking_reference",
+            "vehicle_name",
+            "vehicle_image",
+            "customer_name",
+            "customer_phone",
+            "location_name",
+            "start_date",
+            "end_date",
+            "duration",
+            "status",
+            "status_label",
+            "is_offline",
+            "listing_amount",
+            "advance_amount",
+            "remaining_amount",
+            "available_next_statuses",
+        ]
+
+    def get_vehicle_image(self, booking):
+        request = self.context.get("request")
+        image = booking.listing.vehicle_type.primary_image
+        if not image:
+            return None
+        return request.build_absolute_uri(image.url) if request else image.url
+
+    def get_customer_name(self, booking):
+        name = f"{booking.customer.first_name} {booking.customer.last_name}".strip()
+        return name or booking.customer.phone_number
+
+    def get_start_date(self, booking):
+        from datetime import datetime
+
+        return datetime.combine(booking.pickup_date, booking.pickup_time).isoformat()
+
+    def get_end_date(self, booking):
+        from datetime import datetime
+
+        return datetime.combine(booking.dropoff_date, booking.dropoff_time).isoformat()
+
+    def get_duration(self, booking):
+        from apps.vehicles.utils import format_duration
+        from datetime import datetime
+
+        pickup = datetime.combine(booking.pickup_date, booking.pickup_time)
+        dropoff = datetime.combine(booking.dropoff_date, booking.dropoff_time)
+        hours = (dropoff - pickup).total_seconds() / 3600
+        return format_duration(hours)
+
+    def get_available_next_statuses(self, booking):
+        from apps.bookings.services import VendorBookingService
+
+        return VendorBookingService.ALLOWED_TRANSITIONS.get(booking.status, [])
+
+
+class VendorBookingDetailSerializer(serializers.ModelSerializer):
+    """Full detail for the vendor's booking detail page."""
+
+    vehicle_name = serializers.CharField(source="listing.vehicle_type.name")
+    vehicle_image = serializers.SerializerMethodField()
+    transmission_type = serializers.CharField(
+        source="listing.vehicle_type.transmission_type"
+    )
+    fuel_type = serializers.CharField(source="listing.vehicle_type.fuel_type")
+    customer_name = serializers.SerializerMethodField()
+    customer_phone = serializers.CharField(source="customer.phone_number")
+    pickup_location_name = serializers.CharField(source="pickup_location.name")
+    pickup_location_address = serializers.CharField(source="pickup_location.address")
+    package_name = serializers.CharField(
+        source="pricing_package.package_type.name", allow_null=True
+    )
+    start_date = serializers.SerializerMethodField()
+    end_date = serializers.SerializerMethodField()
+    duration = serializers.SerializerMethodField()
+    status_label = serializers.CharField(source="get_status_display")
+    payment_mode_label = serializers.CharField(source="get_payment_mode_display")
+    payments = serializers.SerializerMethodField()
+    cancellation = serializers.SerializerMethodField()
+    available_next_statuses = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Booking
+        fields = [
+            "id",
+            "booking_reference",
+            "is_offline",
+            "vehicle_name",
+            "vehicle_image",
+            "transmission_type",
+            "fuel_type",
+            "customer_name",
+            "customer_phone",
+            "pickup_location_name",
+            "pickup_location_address",
+            "package_name",
+            "start_date",
+            "end_date",
+            "duration",
+            "status",
+            "status_label",
+            "payment_mode",
+            "payment_mode_label",
+            "listing_amount",
+            "advance_amount",
+            "remaining_amount",
+            "security_deposit_amount",
+            "handed_over_at",
+            "returned_at",
+            "cancelled_at",
+            "cancelled_by_role",
+            "payments",
+            "cancellation",
+            "available_next_statuses",
+            "created_at",
+        ]
+
+    def get_vehicle_image(self, booking):
+        request = self.context.get("request")
+        image = booking.listing.vehicle_type.primary_image
+        if not image:
+            return None
+        return request.build_absolute_uri(image.url) if request else image.url
+
+    def get_customer_name(self, booking):
+        name = f"{booking.customer.first_name} {booking.customer.last_name}".strip()
+        return name or booking.customer.phone_number
+
+    def get_start_date(self, booking):
+        from datetime import datetime
+
+        return datetime.combine(booking.pickup_date, booking.pickup_time).isoformat()
+
+    def get_end_date(self, booking):
+        from datetime import datetime
+
+        return datetime.combine(booking.dropoff_date, booking.dropoff_time).isoformat()
+
+    def get_duration(self, booking):
+        from apps.vehicles.utils import format_duration
+        from datetime import datetime
+
+        pickup = datetime.combine(booking.pickup_date, booking.pickup_time)
+        dropoff = datetime.combine(booking.dropoff_date, booking.dropoff_time)
+        hours = (dropoff - pickup).total_seconds() / 3600
+        return format_duration(hours)
+
+    def get_payments(self, booking):
+        payments = Payment.objects.filter(
+            booking_group_id=booking.booking_group_id
+        ).order_by("-initiated_at")
+        return BookingPaymentSerializer(payments, many=True).data
+
+    def get_cancellation(self, booking):
+        cancellation = getattr(booking, "cancellation", None)
+        if cancellation is None:
+            return None
+        return BookingCancellationSerializer(cancellation).data
+
+    def get_available_next_statuses(self, booking):
+        from apps.bookings.services import VendorBookingService
+
+        return VendorBookingService.ALLOWED_TRANSITIONS.get(booking.status, [])
+
+
+class VendorBookingStatusUpdateSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=Booking.Status.choices)

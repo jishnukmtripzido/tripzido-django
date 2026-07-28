@@ -28,11 +28,15 @@ from apps.bookings.serializers import (
     BookingListSerializer,
     CancellationPreviewSerializer,
     CancelBookingRequestSerializer,
+    VendorBookingListSerializer,
+    VendorBookingDetailSerializer,
+    VendorBookingStatusUpdateSerializer,
 )
 from apps.bookings.services import (
     BookingCheckoutService,
     BookingQueryService,
     CancellationService,
+    VendorBookingService,
 )
 from apps.bookings.repositories import BookingRepository
 from apps.bookings.signature import verify_cashfree_signature
@@ -393,5 +397,106 @@ class CancelBookingView(GenericAPIView):
         return success_response(
             data=serializer.data,
             message="Booking cancelled successfully",
+            status=status.HTTP_200_OK,
+        )
+
+
+class VendorBookingsView(GenericAPIView):
+    """
+    GET /api/bookings/vendor/?status=all|confirmed|ongoing|completed|cancelled
+    Defaults to "all" — matches the vendor list's initial "All" tab.
+    """
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = VendorBookingListSerializer
+    pagination_class = CustomPagination
+
+    def get(self, request):
+        vendor = getattr(request.user, "vendor_profile", None)
+        if vendor is None:
+            return error_response(
+                message="This account has no vendor profile.",
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        tab = request.query_params.get("status", "all")
+        bookings, error = VendorBookingService.get_bookings_for_vendor(vendor.id, tab)
+        if bookings is None:
+            return error_response(message=error, status=status.HTTP_400_BAD_REQUEST)
+
+        page = self.paginate_queryset(bookings)
+        serializer = self.get_serializer(page, many=True, context={"request": request})
+        paginated_response = self.get_paginated_response(serializer.data)
+        return success_response(
+            data=paginated_response.data,
+            message="Bookings retrieved successfully",
+            status=status.HTTP_200_OK,
+        )
+
+
+class VendorBookingDetailView(GenericAPIView):
+    """GET /api/bookings/vendor/<int:booking_id>/"""
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = VendorBookingDetailSerializer
+
+    def get(self, request, booking_id: int):
+        vendor = getattr(request.user, "vendor_profile", None)
+        if vendor is None:
+            return error_response(
+                message="This account has no vendor profile.",
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        booking = VendorBookingService.get_booking_detail(booking_id, vendor.id)
+        if booking is None:
+            return error_response(
+                message="Booking not found", status=status.HTTP_404_NOT_FOUND
+            )
+
+        serializer = VendorBookingDetailSerializer(
+            booking, context={"request": request}
+        )
+        return success_response(
+            data=serializer.data,
+            message="Booking details retrieved successfully",
+            status=status.HTTP_200_OK,
+        )
+
+
+class VendorBookingStatusUpdateView(GenericAPIView):
+    """PATCH /api/bookings/vendor/<int:booking_id>/status/  Body: {"status": "ONGOING"}"""
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = VendorBookingStatusUpdateSerializer
+
+    def patch(self, request, booking_id: int):
+        vendor = getattr(request.user, "vendor_profile", None)
+        if vendor is None:
+            return error_response(
+                message="This account has no vendor profile.",
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        serializer = VendorBookingStatusUpdateSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid status",
+                errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        booking, error = VendorBookingService.update_status(
+            booking_id, vendor.id, serializer.validated_data["status"], request.user
+        )
+        if booking is None:
+            return error_response(message=error, status=status.HTTP_400_BAD_REQUEST)
+
+        detail_serializer = VendorBookingDetailSerializer(
+            booking, context={"request": request}
+        )
+        return success_response(
+            data=detail_serializer.data,
+            message="Booking status updated successfully",
             status=status.HTTP_200_OK,
         )

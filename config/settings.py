@@ -35,6 +35,7 @@ ALLOWED_HOSTS = ["*"]
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
+    "http://localhost:3001",
     "http://127.0.0.1:3000",
     "http://140.238.243.5",
     "http://192.168.1.4:3000",
@@ -48,6 +49,7 @@ CSRF_TRUSTED_ORIGINS = [
     "https://tripzido-django.onrender.com",
     "http://140.238.243.5:3000",
     "http://localhost:3000",
+    "http://localhost:3001",
     "https://tripzido-next.vercel.app",
 ]
 

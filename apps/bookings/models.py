@@ -122,28 +122,9 @@ class Booking(BaseModel):
         max_digits=12, decimal_places=2, default=0
     )
 
-    # customer_payable_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
-    # vendor_payout_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
-
     tax_snapshot = models.JSONField(default=dict, blank=True)
 
-    # # Coupon
-    # coupon = models.ForeignKey(
-    #     "coupon.Coupon",
-    #     null=True,
-    #     blank=True,
-    #     on_delete=models.SET_NULL,
-    #     related_name="bookings",
-    # )
-    # coupon_snapshot = models.JSONField(
-    #     default=dict
-    # )  # full breakdown frozen at checkout
-    # coupon_discount_amount = models.DecimalField(
-    #     max_digits=10, decimal_places=2, default=0
-    # )
-
     # T&C accepted at time of booking (snapshot of which version was accepted)
-    # platform_tc_version = models.CharField(max_length=50, blank=True)
     platform_tc_document = models.ForeignKey(
         "administrations.LegalDocument",
         null=True,
@@ -159,14 +140,6 @@ class Booking(BaseModel):
         related_name="bookings_accepted",
     )
     tc_accepted_at = models.DateTimeField(null=True, blank=True)
-    # Content snapshots, frozen at booking time. The FKs above are
-    # already effectively immutable (VendorTerms/LegalDocument only add
-    # new versions, never mutate old ones, and PROTECT blocks deletion),
-    # so these aren't required for correctness — they exist so (a)
-    # historical content can be read in bulk without an extra join per
-    # booking, and (b) the record survives even a queryset-level
-    # `.update()` on VendorTerms/LegalDocument that bypasses save()
-    # entirely and would otherwise mutate a "historical" row in place.
     vendor_terms_snapshot = models.JSONField(default=dict, blank=True)
     platform_tc_snapshot = models.JSONField(default=dict, blank=True)
 
@@ -174,6 +147,19 @@ class Booking(BaseModel):
     cancellation_policy_snapshot = models.JSONField(
         default=dict
     )  # tiers frozen at booking time
+
+    # NEW: distinguishes a booking the vendor entered manually (e.g. a
+    # walk-in customer paying in person) from one that went through the
+    # platform's own online checkout/Cashfree flow. Doesn't change any
+    # pricing/payment logic by itself — it's a display/reporting flag
+    # for now, exposed on the vendor-facing list and detail endpoints.
+    is_offline = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text="True if this booking was created offline by the vendor "
+        "(e.g. a walk-in customer), rather than through the platform's own "
+        "online checkout flow.",
+    )
 
     status = models.CharField(
         max_length=20,
@@ -274,16 +260,11 @@ class BookingCancellation(BaseModel):
     reason_code = models.CharField(max_length=30, choices=CancellationReason.choices)
     reason_text = models.TextField(blank=True)  # free text, mainly for OTHER
 
-    # Snapshot of administrations.CancellationPolicy.version at
-    # cancellation time — intentionally NOT a ForeignKey, since that
-    # policy is versioned-and-replaced (see CancellationPolicy.save())
-    # and we want this number frozen regardless of later policy changes.
     policy_version = models.PositiveIntegerField(null=True, blank=True)
     hours_before_pickup_at_cancellation = models.DecimalField(
         max_digits=8, decimal_places=2, null=True, blank=True
     )
 
-    # Refund entitlement at time of cancellation
     refund_percentage = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     refundable_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     forfeited_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)

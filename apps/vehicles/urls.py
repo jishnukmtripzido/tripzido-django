@@ -1,10 +1,20 @@
 from django.urls import path
 from apps.vehicles.views import (
     LocationTimingView,
+    PackageTypeOptionsView,
     VehicleDetailView,
     VehicleSearchView,
     VehicleReviewsView,
     CheckoutSummaryView,
+    VehicleTypeOptionsView,
+    VendorFleetListView,
+    VendorListingDetailView,
+    VendorListingImageDetailView,
+    VendorListingImagesView,
+    VendorScheduleTemplateListCreateView,
+    VendorBlockedPeriodListCreateView,
+    VendorBlockedPeriodDetailView,
+    VendorScheduleTemplateDetailView,
 )
 
 urlpatterns = [
@@ -13,6 +23,12 @@ urlpatterns = [
         "checkout-summary/",
         CheckoutSummaryView.as_view(),
         name="vehicle-checkout-summary",
+    ),
+    path("vendor/fleet/", VendorFleetListView.as_view(), name="vendor-fleet-list"),
+    path(
+        "vendor/fleet/<int:listing_id>/",
+        VendorListingDetailView.as_view(),
+        name="vendor-listing-detail",
     ),
     path("<int:listing_id>/", VehicleDetailView.as_view(), name="vehicle-detail"),
     path(
@@ -24,5 +40,45 @@ urlpatterns = [
         "<int:listing_id>/location-timing/",
         LocationTimingView.as_view(),
         name="vehicle-location-timing",
+    ),
+    path(
+        "vendor/vehicle-types/",
+        VehicleTypeOptionsView.as_view(),
+        name="vendor-vehicle-types",
+    ),
+    path(
+        "vendor/package-types/",
+        PackageTypeOptionsView.as_view(),
+        name="vendor-package-types",
+    ),
+    path(
+        "vendor/schedule-templates/",
+        VendorScheduleTemplateListCreateView.as_view(),
+        name="vendor-schedule-templates",
+    ),
+    path(
+        "vendor/fleet/<int:listing_id>/images/",
+        VendorListingImagesView.as_view(),
+        name="vendor-listing-images",
+    ),
+    path(
+        "vendor/fleet/<int:listing_id>/images/<int:image_id>/",
+        VendorListingImageDetailView.as_view(),
+        name="vendor-listing-image-detail",
+    ),
+    path(
+        "vendor/blocks/",
+        VendorBlockedPeriodListCreateView.as_view(),
+        name="vendor-blocked-periods",
+    ),
+    path(
+        "vendor/blocks/<int:block_id>/",
+        VendorBlockedPeriodDetailView.as_view(),
+        name="vendor-blocked-period-detail",
+    ),
+    path(
+        "vendor/schedule-templates/<int:template_id>/",
+        VendorScheduleTemplateDetailView.as_view(),
+        name="vendor-schedule-template-detail",
     ),
 ]
