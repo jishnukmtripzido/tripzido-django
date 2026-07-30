@@ -22,6 +22,7 @@ from apps.vehicles.serializers import (
     VendorBlockedPeriodListSerializer,
     VendorBlockedPeriodCreateSerializer,
     VendorBlockedPeriodUpdateSerializer,
+    ScheduleTemplateCreateSerializer,
 )
 from apps.vehicles.services import (
     VehicleSearchService,

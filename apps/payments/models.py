@@ -1,5 +1,7 @@
 from django.db import models
 from apps.core.models import BaseModel
+from apps.vendors.models import Vendor
+from apps.users.models import User
 
 
 # Create your models here.
@@ -64,3 +66,122 @@ class Payment(BaseModel):
 
     def __str__(self):
         return f"Payment({self.gateway_order_id}) {self.status} ₹{self.amount}"
+
+
+class VendorPayout(BaseModel):
+    """
+    A single manual bank transfer (settlement) made by platform staff
+    to a vendor, covering one or more completed bookings' net rental
+    proceeds.
+
+    Only ever needed for payment_mode=FULL bookings — when a customer
+    pays PARTIAL or PAY_AT_PICKUP, the vendor already collects their
+    share of the rent directly from the customer at pickup (in cash),
+    so there's nothing left for the platform to pay out for those
+    bookings. See VendorPayoutItem for which specific bookings a given
+    payout covers.
+
+    This flow is entirely manual by design: staff select eligible
+    bookings (via Django admin), send an actual bank transfer outside
+    this system, then record the UTR + paid_at here. No payout-gateway
+    integration.
+    """
+
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending Transfer"
+        PAID = "PAID", "Paid"
+        FAILED = "FAILED", "Transfer Failed"
+
+    vendor = models.ForeignKey(Vendor, on_delete=models.PROTECT, related_name="payouts")
+
+    status = models.CharField(
+        max_length=20, choices=Status.choices, default=Status.PENDING, db_index=True
+    )
+
+    # Sum of this payout's VendorPayoutItem amounts. Stored (not
+    # computed on the fly) so the total stays stable regardless of any
+    # later change to a linked Booking — recompute_total() is the
+    # only method that should ever update this, called automatically
+    # by VendorPayoutAdmin after inline items are saved.
+    total_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+
+    # Optional labeling for a regular weekly/monthly settlement cycle.
+    # Leave blank for an ad-hoc/one-off payout.
+    period_start = models.DateField(null=True, blank=True)
+    period_end = models.DateField(null=True, blank=True)
+
+    # Snapshot of the vendor's bank details AT THE TIME of this
+    # payout — not a live FK to BankAccount, since that can change
+    # later and this transfer already happened against whatever
+    # details were current when staff sent it. Expected shape:
+    # {"account_holder_name": "...", "account_number": "...",
+    #  "ifsc_code": "...", "bank_name": "..."}
+    bank_account_snapshot = models.JSONField(default=dict, blank=True)
+
+    utr_number = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Bank transfer UTR/reference number, entered once the transfer completes.",
+    )
+    paid_at = models.DateTimeField(null=True, blank=True)
+    paid_by = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="vendor_payouts_marked_paid",
+        help_text="Staff member who recorded this payout as paid.",
+    )
+
+    note = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["vendor", "status"]),
+        ]
+
+    def recompute_total(self):
+        total = self.items.aggregate(total=models.Sum("amount"))["total"] or 0
+        self.total_amount = total
+        self.save(update_fields=["total_amount"])
+
+    def __str__(self):
+        return (
+            f"Payout({self.vendor.business_name}) ₹{self.total_amount} [{self.status}]"
+        )
+
+
+class VendorPayoutItem(BaseModel):
+    """
+    Links one Booking to the VendorPayout that covers it. OneToOne on
+    booking — a booking can only ever appear in a single payout, which
+    is what actually prevents double-paying a vendor for the same
+    booking, enforced at the database level rather than by
+    application logic alone.
+    """
+
+    payout = models.ForeignKey(
+        VendorPayout, on_delete=models.CASCADE, related_name="items"
+    )
+    booking = models.OneToOneField(
+        "bookings.Booking", on_delete=models.PROTECT, related_name="payout_item"
+    )
+
+    # Snapshot of the amount attributed to this booking — set from
+    # booking.net_amount at creation time (see save() below) and
+    # never read live off Booking again, for the same reason every
+    # other financial snapshot in this codebase is stored: so this
+    # number can never silently drift.
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def save(self, *args, **kwargs):
+        if not self.amount and self.booking_id:
+            self.amount = self.booking.net_amount
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"PayoutItem(booking={self.booking.booking_reference}) ₹{self.amount}"
