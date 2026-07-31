@@ -1,5 +1,6 @@
 # apps/vendors/serializers.py
 from rest_framework import serializers
+from apps.bookings.serializers import VendorBookingListSerializer
 
 
 class VendorTermsSerializer(serializers.Serializer):
@@ -32,3 +33,28 @@ class VendorTermsUpdateSerializer(serializers.Serializer):
     late_penalty_note = serializers.CharField(
         required=False, allow_blank=True, default=""
     )
+
+
+class VendorDashboardSerializer(serializers.Serializer):
+    vendor_status = serializers.CharField()
+    vendor_status_label = serializers.CharField()
+    vendor_rejection_reason = serializers.CharField(allow_blank=True)
+    current_balance = serializers.DecimalField(max_digits=12, decimal_places=2)
+    revenue_this_month = serializers.DecimalField(max_digits=12, decimal_places=2)
+    revenue_last_month = serializers.DecimalField(max_digits=12, decimal_places=2)
+    revenue_trend_pct = serializers.FloatField()
+    orders_this_month = serializers.IntegerField()
+    orders_last_month = serializers.IntegerField()
+    orders_trend_pct = serializers.FloatField()
+    weekly_order_bars = serializers.ListField(child=serializers.IntegerField())
+    range_label = serializers.CharField()
+    # Reuses the exact serializer the Bookings list/detail screens
+    # already use — same fields, same available_next_statuses for
+    # quick-action buttons, so the frontend can reuse BookingListItem
+    # directly instead of a new component.
+    bookings_to_start = VendorBookingListSerializer(many=True)
+    bookings_to_return = VendorBookingListSerializer(many=True)
+    fleet_total_listings = serializers.IntegerField()
+    fleet_pending_approval = serializers.IntegerField()
+    fleet_blocked_units = serializers.IntegerField()
+    recent_bookings = VendorBookingListSerializer(many=True)

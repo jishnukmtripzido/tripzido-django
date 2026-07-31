@@ -4,8 +4,12 @@ from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from drf_spectacular.utils import extend_schema
 
-from apps.vendors.serializers import VendorTermsSerializer, VendorTermsUpdateSerializer
-from apps.vendors.services import VendorTermsService
+from apps.vendors.serializers import (
+    VendorTermsSerializer,
+    VendorTermsUpdateSerializer,
+    VendorDashboardSerializer,
+)
+from apps.vendors.services import VendorTermsService, VendorDashboardService
 from apps.core.responses import success_response, error_response
 
 
@@ -93,4 +97,26 @@ class VendorTermsManageView(GenericAPIView):
             data=output_serializer.data,
             message="Terms saved — new version created",
             status=status.HTTP_201_CREATED,
+        )
+
+
+class VendorDashboardView(GenericAPIView):
+    """GET /api/vendors/me/dashboard/"""
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = VendorDashboardSerializer
+
+    def get(self, request):
+        vendor = getattr(request.user, "vendor_profile", None)
+        if vendor is None:
+            return error_response(
+                message="This account has no vendor profile.",
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        data = VendorDashboardService.get_dashboard(vendor)
+        serializer = VendorDashboardSerializer(data, context={"request": request})
+        return success_response(
+            data=serializer.data,
+            message="Dashboard retrieved successfully",
+            status=status.HTTP_200_OK,
         )
