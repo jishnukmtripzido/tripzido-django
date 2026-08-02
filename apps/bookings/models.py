@@ -248,6 +248,12 @@ class BookingCancellation(BaseModel):
         CancellationReason.OTHER,
     ]
 
+    VENDOR_REASON_CODES = [
+        CancellationReason.VENDOR_BREAKDOWN,
+        CancellationReason.VENDOR_EMERGENCY,
+        CancellationReason.OTHER,
+    ]
+
     booking = models.OneToOneField(
         Booking, on_delete=models.CASCADE, related_name="cancellation"
     )

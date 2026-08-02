@@ -1223,14 +1223,6 @@ class VendorBlockedPeriodService:
 
     @staticmethod
     def create_block(vendor_id: int, validated_data: dict):
-        """
-        Ownership and the "must start in the future" rule are checked
-        here, before ever touching the model. The model's own clean()
-        (order, count vs. available_count, no overlap) still runs via
-        full_clean() inside the repository — both layers raise the
-        same django.core.exceptions.ValidationError, so the view's
-        single except block already handles either source.
-        """
         listing = VendorFleetRepository.get_listing_for_vendor(
             validated_data["listing_id"], vendor_id
         )
@@ -1246,7 +1238,7 @@ class VendorBlockedPeriodService:
             listing=listing,
             count=validated_data["count"],
             start_datetime=validated_data["start_datetime"],
-            end_datetime=validated_data["end_datetime"],
+            end_datetime=validated_data.get("end_datetime"),  # None = indefinite
             reason=validated_data.get("reason", "OTHER"),
             note=validated_data.get("note", ""),
         )
@@ -1257,19 +1249,19 @@ class VendorBlockedPeriodService:
         Returns the updated block, or None if not found/not owned by
         this vendor.
 
-        Checks end_datetime (not start_datetime) against "now" — unlike
-        create, an edit is allowed on a block whose start has already
-        passed (e.g. bumping the count or extending the end date on an
-        already-active block), as long as the block, as edited, still
-        has some future portion remaining. Swap this for the same
-        start_datetime > now() check create uses if you'd rather block
-        all edits once a block has started.
+        end_datetime may be omitted/null in validated_data — that's
+        how a vendor either creates or keeps an indefinite block. The
+        "must be in the future" check only applies when a concrete
+        end_datetime is actually being set; an indefinite block has no
+        end to validate. Sending a concrete end_datetime on a
+        previously-indefinite block is how a vendor closes it.
         """
         block = VendorBlockedPeriodRepository.get_by_id_for_vendor(block_id, vendor_id)
         if block is None:
             return None
 
-        if validated_data["end_datetime"] <= timezone.now():
+        end_datetime = validated_data.get("end_datetime")
+        if end_datetime is not None and end_datetime <= timezone.now():
             raise ValidationError(
                 {
                     "end_datetime": "End date/time must be in the future to edit this block."
@@ -1280,7 +1272,7 @@ class VendorBlockedPeriodService:
             block,
             count=validated_data["count"],
             start_datetime=validated_data["start_datetime"],
-            end_datetime=validated_data["end_datetime"],
+            end_datetime=end_datetime,
             reason=validated_data.get("reason"),
             note=validated_data.get("note"),
         )

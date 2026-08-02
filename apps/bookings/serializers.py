@@ -606,3 +606,27 @@ class VendorBookingDetailSerializer(serializers.ModelSerializer):
 
 class VendorBookingStatusUpdateSerializer(serializers.Serializer):
     status = serializers.ChoiceField(choices=Booking.Status.choices)
+
+
+class VendorCancelBookingRequestSerializer(serializers.Serializer):
+    reason_code = serializers.ChoiceField(
+        choices=BookingCancellation.VENDOR_REASON_CODES
+    )
+    reason_text = serializers.CharField(
+        required=False, allow_blank=True, max_length=1000
+    )
+
+    def validate(self, attrs):
+        is_other = attrs["reason_code"] == BookingCancellation.CancellationReason.OTHER
+        if is_other and not attrs.get("reason_text", "").strip():
+            raise serializers.ValidationError(
+                {"reason_text": "Please tell us a bit more when selecting 'Other'."}
+            )
+        return attrs
+
+
+class AdminCancelBookingRequestSerializer(serializers.Serializer):
+    reason_text = serializers.CharField(max_length=1000)
+    refund_percentage_override = serializers.DecimalField(
+        max_digits=5, decimal_places=2, required=False, min_value=0, max_value=100
+    )

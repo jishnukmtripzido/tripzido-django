@@ -1,5 +1,6 @@
 from django.urls import path
 from apps.bookings.views import (
+    AdminCancelBookingView,
     CreateBookingOrderView,
     BookingPaymentStatusView,
     CashfreeWebhookView,
@@ -11,6 +12,7 @@ from apps.bookings.views import (
     VendorBookingsView,
     VendorBookingDetailView,
     VendorBookingStatusUpdateView,
+    VendorCancelBookingView,
 )
 
 urlpatterns = [
@@ -52,5 +54,15 @@ urlpatterns = [
         "<int:booking_id>/cancel/",
         CancelBookingView.as_view(),
         name="booking-cancel",
+    ),
+    path(
+        "vendor/<int:booking_id>/cancel/",
+        VendorCancelBookingView.as_view(),
+        name="vendor-booking-cancel",
+    ),
+    path(
+        "admin/<int:booking_id>/cancel/",
+        AdminCancelBookingView.as_view(),
+        name="admin-booking-cancel",
     ),
 ]

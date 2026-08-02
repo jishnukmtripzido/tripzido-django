@@ -679,6 +679,7 @@ class VendorBlockedPeriodListSerializer(serializers.ModelSerializer):
     listing_id = serializers.IntegerField(source="listing.id")
     listing_available_count = serializers.IntegerField(source="listing.available_count")
     reason_label = serializers.CharField(source="get_reason_display")
+    is_indefinite = serializers.BooleanField(read_only=True)  # ← source= removed
 
     class Meta:
         model = ListingBlockedPeriod
@@ -689,6 +690,7 @@ class VendorBlockedPeriodListSerializer(serializers.ModelSerializer):
             "location_name",
             "start_datetime",
             "end_datetime",
+            "is_indefinite",
             "count",
             "listing_available_count",
             "reason",
@@ -701,7 +703,9 @@ class VendorBlockedPeriodListSerializer(serializers.ModelSerializer):
 class VendorBlockedPeriodCreateSerializer(serializers.Serializer):
     listing_id = serializers.IntegerField()
     start_datetime = serializers.DateTimeField()
-    end_datetime = serializers.DateTimeField()
+    end_datetime = serializers.DateTimeField(
+        required=False, allow_null=True, default=None
+    )
     count = serializers.IntegerField(min_value=1)
     reason = serializers.ChoiceField(
         choices=ListingBlockedPeriod.BlockReason.choices, default="OTHER"
@@ -709,7 +713,8 @@ class VendorBlockedPeriodCreateSerializer(serializers.Serializer):
     note = serializers.CharField(required=False, allow_blank=True, default="")
 
     def validate(self, attrs):
-        if attrs["end_datetime"] <= attrs["start_datetime"]:
+        end = attrs.get("end_datetime")
+        if end is not None and end <= attrs["start_datetime"]:
             raise serializers.ValidationError(
                 {"end_datetime": "End date/time must be after start date/time."}
             )
@@ -718,7 +723,9 @@ class VendorBlockedPeriodCreateSerializer(serializers.Serializer):
 
 class VendorBlockedPeriodUpdateSerializer(serializers.Serializer):
     start_datetime = serializers.DateTimeField()
-    end_datetime = serializers.DateTimeField()
+    end_datetime = serializers.DateTimeField(
+        required=False, allow_null=True, default=None
+    )
     count = serializers.IntegerField(min_value=1)
     reason = serializers.ChoiceField(
         choices=ListingBlockedPeriod.BlockReason.choices, required=False
@@ -726,7 +733,8 @@ class VendorBlockedPeriodUpdateSerializer(serializers.Serializer):
     note = serializers.CharField(required=False, allow_blank=True)
 
     def validate(self, attrs):
-        if attrs["end_datetime"] <= attrs["start_datetime"]:
+        end = attrs.get("end_datetime")
+        if end is not None and end <= attrs["start_datetime"]:
             raise serializers.ValidationError(
                 {"end_datetime": "End date/time must be after start date/time."}
             )

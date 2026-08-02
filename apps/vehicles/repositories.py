@@ -279,13 +279,19 @@ class AvailabilityRepository:
         Returns {listing_id: total units taken out of service by
         overlapping ListingBlockedPeriod rows for this date range}.
         Sums `count` across all overlapping blocks for a listing.
+
+        A null end_datetime means an indefinite block — treated as
+        extending to +infinity, so it overlaps any requested range whose
+        start is on/after the block's own start. Without the isnull
+        branch, `end_datetime__gt=pickup_dt` evaluates to NULL (not True)
+        in SQL for those rows and they'd be silently excluded.
         """
         rows = (
             ListingBlockedPeriod.objects.filter(
                 listing_id__in=listing_ids,
                 start_datetime__lt=dropoff_dt,
-                end_datetime__gt=pickup_dt,
             )
+            .filter(Q(end_datetime__isnull=True) | Q(end_datetime__gt=pickup_dt))
             .values("listing_id")
             .annotate(total=Sum("count"))
         )

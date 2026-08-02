@@ -315,6 +315,12 @@ class ListingBlockedPeriod(BaseModel):
     `count` is how many units of the fleet this block takes out of
     service (e.g. 1 scooter sent for repair out of a fleet of 3) — it
     no longer blocks the entire listing regardless of fleet size.
+
+    `end_datetime` may be null, meaning the block is open-ended /
+    indefinite — e.g. a vehicle pulled for repair with no known return
+    date. An indefinite block stays in effect for every future date
+    until a vendor explicitly closes it (sets a concrete end_datetime
+    via update).
     """
 
     class BlockReason(models.TextChoices):
@@ -327,7 +333,11 @@ class ListingBlockedPeriod(BaseModel):
         VehicleListing, on_delete=models.CASCADE, related_name="blocked_periods"
     )
     start_datetime = models.DateTimeField(db_index=True)
-    end_datetime = models.DateTimeField()
+    end_datetime = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Leave blank for an open-ended/indefinite block.",
+    )
     count = models.PositiveIntegerField(default=1, validators=[MinValueValidator(1)])
     reason = models.CharField(
         max_length=20, choices=BlockReason.choices, default=BlockReason.OTHER
@@ -338,8 +348,15 @@ class ListingBlockedPeriod(BaseModel):
         ordering = ["start_datetime"]
         indexes = [models.Index(fields=["listing", "start_datetime", "end_datetime"])]
 
+    @property
+    def is_indefinite(self) -> bool:
+        return self.end_datetime is None
+
     def clean(self):
-        if self.end_datetime <= self.start_datetime:
+        # end_datetime is optional now — only validate ordering when
+        # it's actually set. None means "forever", which is always
+        # valid relative to start_datetime.
+        if self.end_datetime is not None and self.end_datetime <= self.start_datetime:
             raise ValidationError("end_datetime must be after start_datetime")
 
         if self.listing_id and self.count > self.listing.available_count:
@@ -348,14 +365,32 @@ class ListingBlockedPeriod(BaseModel):
                 f"({self.listing.available_count})."
             )
 
-        overlapping = ListingBlockedPeriod.objects.filter(
-            listing=self.listing,
-            start_datetime__lt=self.end_datetime,
-            end_datetime__gt=self.start_datetime,
-        ).exclude(pk=self.pk)
+        overlapping = ListingBlockedPeriod.objects.filter(listing=self.listing).exclude(
+            pk=self.pk
+        )
+
+        # Interval overlap with a nullable end treated as +infinity:
+        # [s1, e1) overlaps [s2, e2) when s1 < e2 AND s2 < e1.
+        if self.end_datetime is not None:
+            overlapping = overlapping.filter(start_datetime__lt=self.end_datetime)
+        # else: mine is infinite, so every existing start is "< infinity" —
+        # skip this filter rather than exclude anything.
+
+        overlapping = overlapping.filter(
+            models.Q(end_datetime__isnull=True)
+            | models.Q(end_datetime__gt=self.start_datetime)
+        )
 
         if overlapping.exists():
             raise ValidationError("Overlaps with an existing blocked period.")
+
+    def __str__(self):
+        end = (
+            self.end_datetime.isoformat()
+            if self.end_datetime
+            else "until further notice"
+        )
+        return f"{self.listing_id}: {self.start_datetime.isoformat()} → {end}"
 
 
 class DoorstepDeliveryTier(BaseModel):

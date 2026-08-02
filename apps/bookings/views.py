@@ -22,6 +22,7 @@ from drf_spectacular.utils import OpenApiParameter, extend_schema
 # Local Apps - Bookings
 from apps.bookings.cashfree_client import CashfreeClient
 from apps.bookings.serializers import (
+    AdminCancelBookingRequestSerializer,
     BookingCancellationSerializer,
     BookingConfirmationSerializer,
     BookingDetailSerializer,
@@ -31,6 +32,7 @@ from apps.bookings.serializers import (
     VendorBookingListSerializer,
     VendorBookingDetailSerializer,
     VendorBookingStatusUpdateSerializer,
+    VendorCancelBookingRequestSerializer,
 )
 from apps.bookings.services import (
     BookingCheckoutService,
@@ -41,6 +43,7 @@ from apps.bookings.services import (
 from apps.bookings.repositories import BookingRepository
 from apps.bookings.signature import verify_cashfree_signature
 from apps.payments.models import Payment
+from apps.bookings.models import Booking, BookingCancellation
 
 # Local Apps - Core
 from apps.core.pagination import CustomPagination
@@ -498,5 +501,92 @@ class VendorBookingStatusUpdateView(GenericAPIView):
         return success_response(
             data=detail_serializer.data,
             message="Booking status updated successfully",
+            status=status.HTTP_200_OK,
+        )
+
+
+class VendorCancelBookingView(GenericAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class = VendorCancelBookingRequestSerializer
+
+    def post(self, request, booking_id: int):
+        vendor = getattr(request.user, "vendor_profile", None)
+        if vendor is None:
+            return error_response(
+                message="This account has no vendor profile.",
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        booking = VendorBookingService.get_booking_detail(booking_id, vendor.id)
+        if booking is None:
+            return error_response(
+                message="Booking not found", status=status.HTTP_404_NOT_FOUND
+            )
+
+        serializer = VendorCancelBookingRequestSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid cancellation request",
+                errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        cancellation, error = CancellationService.cancel_booking_by_vendor(
+            booking,
+            vendor_user=request.user,
+            reason_code=serializer.validated_data["reason_code"],
+            reason_text=serializer.validated_data.get("reason_text", ""),
+        )
+        if cancellation is None:
+            return error_response(message=error, status=status.HTTP_400_BAD_REQUEST)
+
+        detail = VendorBookingDetailSerializer(booking, context={"request": request})
+        return success_response(
+            data=detail.data,
+            message="Booking cancelled successfully",
+            status=status.HTTP_200_OK,
+        )
+
+
+class AdminCancelBookingView(GenericAPIView):
+    permission_classes = [IsAuthenticated]  # + your admin/staff permission class
+    serializer_class = AdminCancelBookingRequestSerializer
+
+    def post(self, request, booking_id: int):
+        # plug in your actual admin-role check here
+        if not request.user.is_staff:
+            return error_response(
+                message="Not authorized.", status=status.HTTP_403_FORBIDDEN
+            )
+
+        booking = Booking.objects.filter(id=booking_id).first()
+        if booking is None:
+            return error_response(
+                message="Booking not found", status=status.HTTP_404_NOT_FOUND
+            )
+
+        serializer = AdminCancelBookingRequestSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid cancellation request",
+                errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        cancellation, error = CancellationService.cancel_booking_by_admin(
+            booking,
+            admin_user=request.user,
+            reason_text=serializer.validated_data["reason_text"],
+            refund_percentage_override=serializer.validated_data.get(
+                "refund_percentage_override"
+            ),
+        )
+        if cancellation is None:
+            return error_response(message=error, status=status.HTTP_400_BAD_REQUEST)
+
+        cancel_serializer = BookingCancellationSerializer(cancellation)
+        return success_response(
+            data=cancel_serializer.data,
+            message="Booking cancelled successfully",
             status=status.HTTP_200_OK,
         )
