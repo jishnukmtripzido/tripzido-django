@@ -23,6 +23,7 @@ from apps.vehicles.serializers import (
     VendorBlockedPeriodCreateSerializer,
     VendorBlockedPeriodUpdateSerializer,
     ScheduleTemplateCreateSerializer,
+    VendorPickupPointSerializer,
 )
 from apps.vehicles.services import (
     VehicleSearchService,
@@ -39,6 +40,7 @@ from apps.vehicles.services import (
     PackageTypeService,
     VendorListingUpdateService,
     VendorBlockedPeriodService,
+    VendorPickupPointService,
 )
 from apps.core.responses import success_response, error_response
 from drf_spectacular.utils import extend_schema, OpenApiParameter
@@ -914,5 +916,202 @@ class VendorScheduleTemplateDetailView(GenericAPIView):
         return success_response(
             data=None,
             message="Schedule template deleted successfully",
+            status=status.HTTP_204_NO_CONTENT,
+        )
+
+
+class VendorPickupPointListCreateView(GenericAPIView):
+    """
+    GET  /api/vehicles/vendor/pickup-points/?pickup_location_id=...
+    POST /api/vehicles/vendor/pickup-points/
+    """
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = VendorPickupPointSerializer
+
+    def get(self, request):
+        vendor = getattr(request.user, "vendor_profile", None)
+        if vendor is None:
+            return error_response(
+                message="This account has no vendor profile.",
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        raw_location_id = request.query_params.get("pickup_location_id")
+        points = VendorPickupPointService.get_for_vendor(
+            vendor.id, int(raw_location_id) if raw_location_id else None
+        )
+        serializer = self.get_serializer(points, many=True)
+        return success_response(
+            data=serializer.data,
+            message="Pickup points retrieved successfully",
+            status=status.HTTP_200_OK,
+        )
+
+    def post(self, request):
+        vendor = getattr(request.user, "vendor_profile", None)
+        if vendor is None:
+            return error_response(
+                message="This account has no vendor profile.",
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        serializer = VendorPickupPointSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid pickup point data",
+                errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            point = VendorPickupPointService.create_for_vendor(
+                vendor.id, serializer.validated_data
+            )
+        except ValidationError as e:
+            return error_response(
+                message="Validation failed",
+                errors=e.message_dict if hasattr(e, "message_dict") else str(e),
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        output_serializer = self.get_serializer(point)
+        return success_response(
+            data=output_serializer.data,
+            message="Pickup point created successfully",
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class VendorPickupPointListCreateView(GenericAPIView):
+    """
+    GET  /api/vehicles/vendor/pickup-points/?pickup_location_id=...
+    POST /api/vehicles/vendor/pickup-points/
+    """
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = VendorPickupPointSerializer
+
+    def get(self, request):
+        vendor = getattr(request.user, "vendor_profile", None)
+        if vendor is None:
+            return error_response(
+                message="This account has no vendor profile.",
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        raw_location_id = request.query_params.get("pickup_location_id")
+        points = VendorPickupPointService.get_for_vendor(
+            vendor.id, int(raw_location_id) if raw_location_id else None
+        )
+        serializer = self.get_serializer(points, many=True)
+        return success_response(
+            data=serializer.data,
+            message="Pickup points retrieved successfully",
+            status=status.HTTP_200_OK,
+        )
+
+    def post(self, request):
+        vendor = getattr(request.user, "vendor_profile", None)
+        if vendor is None:
+            return error_response(
+                message="This account has no vendor profile.",
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        serializer = VendorPickupPointSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid pickup point data",
+                errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            point = VendorPickupPointService.create_for_vendor(
+                vendor.id, serializer.validated_data
+            )
+        except ValidationError as e:
+            return error_response(
+                message="Validation failed",
+                errors=e.message_dict if hasattr(e, "message_dict") else str(e),
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        output_serializer = self.get_serializer(point)
+        return success_response(
+            data=output_serializer.data,
+            message="Pickup point created successfully",
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class VendorPickupPointDetailView(GenericAPIView):
+    """GET/PATCH/DELETE /api/vehicles/vendor/pickup-points/<int:point_id>/"""
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = VendorPickupPointSerializer
+
+    def get(self, request, point_id: int):
+        vendor = getattr(request.user, "vendor_profile", None)
+        if vendor is None:
+            return error_response(
+                message="This account has no vendor profile.",
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        point = VendorPickupPointService.get_detail_for_vendor(point_id, vendor.id)
+        if point is None:
+            return error_response(
+                message="Pickup point not found", status=status.HTTP_404_NOT_FOUND
+            )
+        serializer = self.get_serializer(point)
+        return success_response(
+            data=serializer.data,
+            message="Pickup point retrieved successfully",
+            status=status.HTTP_200_OK,
+        )
+
+    def patch(self, request, point_id: int):
+        vendor = getattr(request.user, "vendor_profile", None)
+        if vendor is None:
+            return error_response(
+                message="This account has no vendor profile.",
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        serializer = VendorPickupPointSerializer(data=request.data, partial=True)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid pickup point data",
+                errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            point = VendorPickupPointService.update_for_vendor(
+                point_id, vendor.id, serializer.validated_data
+            )
+        except ValidationError as e:
+            return error_response(
+                message="Validation failed",
+                errors=e.message_dict if hasattr(e, "message_dict") else str(e),
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if point is None:
+            return error_response(
+                message="Pickup point not found", status=status.HTTP_404_NOT_FOUND
+            )
+        serializer = self.get_serializer(point)
+        return success_response(
+            data=serializer.data,
+            message="Pickup point updated successfully",
+            status=status.HTTP_200_OK,
+        )
+
+    def delete(self, request, point_id: int):
+        vendor = getattr(request.user, "vendor_profile", None)
+        if vendor is None:
+            return error_response(
+                message="This account has no vendor profile.",
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        deleted = VendorPickupPointService.delete_for_vendor(point_id, vendor.id)
+        if not deleted:
+            return error_response(
+                message="Pickup point not found", status=status.HTTP_404_NOT_FOUND
+            )
+        return success_response(
+            data=None,
+            message="Pickup point deleted successfully",
             status=status.HTTP_204_NO_CONTENT,
         )

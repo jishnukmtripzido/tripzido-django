@@ -11,6 +11,8 @@ from apps.vehicles.views import (
     VendorListingDetailView,
     VendorListingImageDetailView,
     VendorListingImagesView,
+    VendorPickupPointDetailView,
+    VendorPickupPointListCreateView,
     VendorScheduleTemplateListCreateView,
     VendorBlockedPeriodListCreateView,
     VendorBlockedPeriodDetailView,
@@ -80,5 +82,15 @@ urlpatterns = [
         "vendor/schedule-templates/<int:template_id>/",
         VendorScheduleTemplateDetailView.as_view(),
         name="vendor-schedule-template-detail",
+    ),
+    path(
+        "vendor/pickup-points/",
+        VendorPickupPointListCreateView.as_view(),
+        name="vendor-pickup-points",
+    ),
+    path(
+        "vendor/pickup-points/<int:point_id>/",
+        VendorPickupPointDetailView.as_view(),
+        name="vendor-pickup-point-detail",
     ),
 ]

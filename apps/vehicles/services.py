@@ -12,6 +12,7 @@ from apps.vehicles.repositories import (
     PackageTypeRepository,
     ScheduleTemplateRepository,
     VendorBlockedPeriodRepository,
+    VendorPickupPointRepository,
 )
 from django.db import transaction
 from django.core.exceptions import ValidationError
@@ -989,6 +990,27 @@ class VendorListingDetailService:
                 "latitude": float(location.latitude) if location.latitude else None,
                 "longitude": float(location.longitude) if location.longitude else None,
             },
+            "pickup_point": (
+                {
+                    "id": listing.pickup_point.id,
+                    "label": listing.pickup_point.label,
+                    "address": listing.pickup_point.address,
+                    "contact_numbers": listing.pickup_point.contact_numbers,
+                    "latitude": (
+                        float(listing.pickup_point.latitude)
+                        if listing.pickup_point.latitude
+                        else None
+                    ),
+                    "longitude": (
+                        float(listing.pickup_point.longitude)
+                        if listing.pickup_point.longitude
+                        else None
+                    ),
+                    "google_maps_link": listing.pickup_point.google_maps_link,
+                }
+                if listing.pickup_point
+                else None
+            ),
             "images": images,
             "pricing_packages": packages,
             "schedule": VendorListingDetailService._build_schedule(listing),
@@ -1080,6 +1102,14 @@ class VendorListingCreateService:
         except ValidationError:
             raise ValidationError({"pickup_location_id": "Pickup location not found."})
 
+        pickup_point = VendorPickupPointRepository.get_owned_by_vendor(
+            validated_data["pickup_point_id"], vendor.id
+        )
+        if pickup_point is None:
+            raise ValidationError(
+                {"pickup_point_id": "Pickup point not found for this vendor."}
+            )
+
         schedule_template = ScheduleTemplateRepository.get_owned_by_vendor(
             validated_data["schedule_template_id"], vendor.id
         )
@@ -1127,6 +1157,7 @@ class VendorListingCreateService:
             vendor,
             vehicle_type,
             pickup_location,
+            pickup_point,
             schedule_template,
             listing_fields,
             packages,
@@ -1162,6 +1193,14 @@ class VendorListingUpdateService:
             )
         except ValidationError:
             raise ValidationError({"pickup_location_id": "Pickup location not found."})
+
+        pickup_point = VendorPickupPointRepository.get_owned_by_vendor(
+            validated_data["pickup_point_id"], vendor.id
+        )
+        if pickup_point is None:
+            raise ValidationError(
+                {"pickup_point_id": "Pickup point not found for this vendor."}
+            )
 
         schedule_template = ScheduleTemplateRepository.get_owned_by_vendor(
             validated_data["schedule_template_id"], vendor.id
@@ -1207,7 +1246,12 @@ class VendorListingUpdateService:
         }
 
         return VendorFleetRepository.update_listing(
-            listing, pickup_location, schedule_template, listing_fields, packages
+            listing,
+            pickup_location,
+            schedule_template,
+            listing_fields,
+            packages,
+            pickup_point,
         )
 
 
@@ -1280,3 +1324,26 @@ class VendorBlockedPeriodService:
     @staticmethod
     def delete_block(block_id: int, vendor_id: int) -> bool:
         return VendorBlockedPeriodRepository.delete_block(block_id, vendor_id)
+
+
+class VendorPickupPointService:
+
+    @staticmethod
+    def get_for_vendor(vendor_id: int, pickup_location_id: int | None = None):
+        return VendorPickupPointRepository.get_for_vendor(vendor_id, pickup_location_id)
+
+    @staticmethod
+    def get_detail_for_vendor(point_id: int, vendor_id: int):
+        return VendorPickupPointRepository.get_detail_for_vendor(point_id, vendor_id)
+
+    @staticmethod
+    def create_for_vendor(vendor_id: int, data: dict):
+        return VendorPickupPointRepository.create_for_vendor(vendor_id, data)
+
+    @staticmethod
+    def update_for_vendor(point_id: int, vendor_id: int, data: dict):
+        return VendorPickupPointRepository.update_for_vendor(point_id, vendor_id, data)
+
+    @staticmethod
+    def delete_for_vendor(point_id: int, vendor_id: int) -> bool:
+        return VendorPickupPointRepository.delete_for_vendor(point_id, vendor_id)

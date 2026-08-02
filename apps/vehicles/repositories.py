@@ -10,6 +10,7 @@ from apps.vehicles.models import (
     TemplateScheduleDay,
     VehicleReview,
     PricingPackageType,
+    VendorPickupPoint,
 )
 from apps.vendors.models import Vendor, VendorTerms, VendorSubscription
 from django.utils import timezone
@@ -480,7 +481,7 @@ class VendorFleetRepository:
         """
         return (
             VehicleListing.objects.filter(vendor_id=vendor_id)
-            .select_related("vehicle_type", "pickup_location")
+            .select_related("vehicle_type", "pickup_location", "pickup_point")
             .prefetch_related(
                 Prefetch(
                     "images",
@@ -508,6 +509,7 @@ class VendorFleetRepository:
                 "vehicle_type",
                 "pickup_location__city",
                 "schedule_template",
+                "pickup_point",
             )
             .prefetch_related(
                 Prefetch(
@@ -535,6 +537,7 @@ class VendorFleetRepository:
         vendor,
         vehicle_type,
         pickup_location,
+        pickup_point,
         schedule_template,
         listing_fields: dict,
         packages: list[dict],
@@ -543,6 +546,7 @@ class VendorFleetRepository:
             vendor=vendor,
             vehicle_type=vehicle_type,
             pickup_location=pickup_location,
+            pickup_point=pickup_point,
             schedule_template=schedule_template,
             **listing_fields,
         )
@@ -618,6 +622,7 @@ class VendorFleetRepository:
     def update_listing(
         listing: VehicleListing,
         pickup_location,
+        pickup_point,
         schedule_template,
         listing_fields: dict,
         packages: list[dict],
@@ -625,6 +630,7 @@ class VendorFleetRepository:
         for field, value in listing_fields.items():
             setattr(listing, field, value)
         listing.pickup_location = pickup_location
+        listing.pickup_point = pickup_point
         listing.schedule_template = schedule_template
         # Every edit sends the listing back for re-review — clears a
         # stale rejection message so the detail page doesn't show an
@@ -870,5 +876,58 @@ class VendorBlockedPeriodRepository:
         """
         deleted, _ = ListingBlockedPeriod.objects.filter(
             id=block_id, listing__vendor_id=vendor_id
+        ).delete()
+        return deleted > 0
+
+
+class VendorPickupPointRepository:
+
+    @staticmethod
+    def get_for_vendor(vendor_id: int, pickup_location_id: int | None = None):
+        qs = VendorPickupPoint.objects.filter(vendor_id=vendor_id).select_related(
+            "pickup_location"
+        )
+        if pickup_location_id is not None:
+            qs = qs.filter(pickup_location_id=pickup_location_id)
+        return qs
+
+    @staticmethod
+    def get_detail_for_vendor(point_id: int, vendor_id: int):
+        return (
+            VendorPickupPoint.objects.filter(id=point_id, vendor_id=vendor_id)
+            .select_related("pickup_location")
+            .first()
+        )
+
+    @staticmethod
+    def get_owned_by_vendor(point_id: int, vendor_id: int):
+        return VendorPickupPoint.objects.filter(
+            id=point_id, vendor_id=vendor_id
+        ).first()
+
+    @staticmethod
+    def create_for_vendor(vendor_id: int, data: dict) -> VendorPickupPoint:
+        point = VendorPickupPoint(vendor_id=vendor_id, **data)
+        point.full_clean()
+        point.save()
+        return point
+
+    @staticmethod
+    def update_for_vendor(point_id: int, vendor_id: int, data: dict):
+        point = VendorPickupPoint.objects.filter(
+            id=point_id, vendor_id=vendor_id
+        ).first()
+        if point is None:
+            return None
+        for field, value in data.items():
+            setattr(point, field, value)
+        point.full_clean()
+        point.save()
+        return point
+
+    @staticmethod
+    def delete_for_vendor(point_id: int, vendor_id: int) -> bool:
+        deleted, _ = VendorPickupPoint.objects.filter(
+            id=point_id, vendor_id=vendor_id
         ).delete()
         return deleted > 0

@@ -12,6 +12,7 @@ from apps.vehicles.models import (
     PricingPackage,
     PricingPackageType,
     ListingBlockedPeriod,
+    VendorPickupPoint,
 )
 from apps.vehicles.utils import format_duration
 
@@ -404,6 +405,7 @@ class VendorFleetListingSerializer(serializers.ModelSerializer):
     location_name = serializers.CharField(source="pickup_location.name")
     quantity = serializers.IntegerField(source="available_count")
     primary_image = serializers.SerializerMethodField()
+    pickup_point_label = serializers.SerializerMethodField()
 
     class Meta:
         model = VehicleListing
@@ -416,6 +418,7 @@ class VendorFleetListingSerializer(serializers.ModelSerializer):
             "quantity",
             "status",
             "primary_image",
+            "pickup_point_label",
         ]
 
     def get_primary_image(self, listing):
@@ -437,6 +440,10 @@ class VendorFleetListingSerializer(serializers.ModelSerializer):
                 return None
             url = image.image.url
         return request.build_absolute_uri(url) if request else url
+
+    def get_pickup_point_label(self, listing):
+        point = listing.pickup_point
+        return point.label or point.address[:40] if point else None
 
 
 class VendorListingVehicleTypeSerializer(serializers.Serializer):
@@ -609,6 +616,7 @@ class VendorListingCreateSerializer(serializers.Serializer):
     pickup_location_id = serializers.IntegerField()
     schedule_template_id = serializers.IntegerField()
     available_count = serializers.IntegerField(min_value=1, default=1)
+    pickup_point_id = serializers.IntegerField()
     security_deposit_amount = serializers.DecimalField(
         max_digits=10, decimal_places=2, min_value=0, default=0
     )
@@ -642,6 +650,7 @@ class VendorListingCreateSerializer(serializers.Serializer):
 class VendorListingUpdateSerializer(serializers.Serializer):
     pickup_location_id = serializers.IntegerField()
     schedule_template_id = serializers.IntegerField()
+    pickup_point_id = serializers.IntegerField()
     available_count = serializers.IntegerField(min_value=1, default=1)
     security_deposit_amount = serializers.DecimalField(
         max_digits=10, decimal_places=2, min_value=0, default=0
@@ -739,3 +748,60 @@ class VendorBlockedPeriodUpdateSerializer(serializers.Serializer):
                 {"end_datetime": "End date/time must be after start date/time."}
             )
         return attrs
+
+
+class VendorPickupPointSerializer(serializers.ModelSerializer):
+    pickup_location_name = serializers.CharField(
+        source="pickup_location.name", read_only=True, allow_null=True
+    )
+
+    class Meta:
+        model = VendorPickupPoint
+        fields = [
+            "id",
+            "pickup_location",
+            "pickup_location_name",
+            "label",
+            "address",
+            "contact_numbers",
+            "latitude",
+            "longitude",
+            "google_maps_link",
+        ]
+
+    def validate_contact_numbers(self, value):
+        if not isinstance(value, list) or not (1 <= len(value) <= 3):
+            raise serializers.ValidationError(
+                "Provide between 1 and 3 contact numbers."
+            )
+        for n in value:
+            if not isinstance(n, str) or not n.strip():
+                raise serializers.ValidationError(
+                    "Each contact number must be a non-empty string."
+                )
+        return value
+
+
+class VendorListingPickupPointSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    label = serializers.CharField(allow_blank=True)
+    address = serializers.CharField()
+    contact_numbers = serializers.ListField(child=serializers.CharField())
+    latitude = serializers.FloatField(allow_null=True)
+    longitude = serializers.FloatField(allow_null=True)
+    google_maps_link = serializers.CharField(allow_blank=True)
+
+
+class VendorListingDetailSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    status = serializers.CharField()
+    rejection_reason = serializers.CharField(allow_blank=True)
+    available_count = serializers.IntegerField()
+    vehicle_type = VendorListingVehicleTypeSerializer()
+    pickup_location = VendorListingPickupLocationSerializer()
+    pickup_point = VendorListingPickupPointSerializer(allow_null=True)  # NEW
+    images = VendorListingImageDetailSerializer(many=True)
+    pricing_packages = VendorListingPackageDetailSerializer(many=True)
+    schedule = VendorListingScheduleSerializer()
+    policies = VendorListingPoliciesSerializer()
+    created_at = serializers.DateTimeField()

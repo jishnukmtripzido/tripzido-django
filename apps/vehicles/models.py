@@ -160,6 +160,19 @@ class VehicleListing(BaseModel):
         PickupLocation, on_delete=models.PROTECT, related_name="vehicle_listings"
     )
 
+    # NEW: the vendor's own exact address within the coarse area above
+    # (address text, contact numbers, geo-pin) — see VendorPickupPoint
+    # below. Nullable/SET_NULL, same pattern as schedule_template: a
+    # listing can exist without one yet, and deleting a saved pickup
+    # point never cascades into deleting the listings that reference it.
+    pickup_point = models.ForeignKey(
+        "VendorPickupPoint",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="listings",
+    )
+
     # Reusable weekly schedule. NULL = no schedule assigned yet, which
     # is treated as closed every day (same fail-safe as a listing
     # missing a day entry under the old per-listing model).
@@ -230,6 +243,76 @@ class VehicleListing(BaseModel):
 
     def __str__(self):
         return f"{self.vendor.business_name} | {self.vehicle_type} @ {self.pickup_location}"
+
+
+class VendorPickupPoint(BaseModel):
+    """
+    A vendor's own precise pickup/drop address — reusable across many
+    listings, the same way OperatingScheduleTemplate is reusable.
+    Distinct from PickupLocation (the coarse, admin-managed area a
+    listing is filed under, e.g. "Mananthavadi"): this is the exact
+    spot within that area — the actual building/street a customer is
+    sent to, plus who to call once they arrive.
+    """
+
+    vendor = models.ForeignKey(
+        Vendor, on_delete=models.CASCADE, related_name="pickup_points"
+    )
+    # The admin-managed area this exact address falls within — lets
+    # the listing wizard filter to "this vendor's saved addresses
+    # within the area they just picked" rather than showing every
+    # saved address across every city at once.
+    pickup_location = models.ForeignKey(
+        PickupLocation,
+        on_delete=models.PROTECT,
+        related_name="vendor_pickup_points",
+        null=True,
+        blank=True,
+    )
+
+    label = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Optional short name, e.g. 'Main Shop', 'Airport Counter'.",
+    )
+    address = models.TextField(
+        help_text="The exact street address customers are sent to."
+    )
+
+    # 1-3 phone numbers a customer can call at this specific address.
+    # JSON list, not a separate related model — same pattern as
+    # VendorTerms.terms_items, since these numbers have no identity of
+    # their own outside this address. Count validated in the
+    # serializer AND in clean() below as a backstop.
+    contact_numbers = models.JSONField(default=list)
+
+    # Exact geo-pin. Primary path: the browser's Geolocation API ("use
+    # my current location" — no external API key needed). Manual entry
+    # is the fallback. Nullable since address text can be saved before
+    # a pin is set.
+    latitude = models.DecimalField(
+        max_digits=9, decimal_places=6, null=True, blank=True
+    )
+    longitude = models.DecimalField(
+        max_digits=9, decimal_places=6, null=True, blank=True
+    )
+
+    # Optional share-link, shown as "Open in Maps" — NOT parsed for
+    # coordinates. Google's share-link URL formats vary too much to
+    # reliably regex-extract lat/lng from every version; latitude/
+    # longitude above remain the single source of truth for any real
+    # map-pin/distance logic.
+    google_maps_link = models.URLField(blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def clean(self):
+        if not (1 <= len(self.contact_numbers) <= 3):
+            raise ValidationError("Provide between 1 and 3 contact numbers.")
+
+    def __str__(self):
+        return f"{self.vendor.business_name} – {self.label or self.address[:40]}"
 
 
 class PackageCategory(BaseModel):
