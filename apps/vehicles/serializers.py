@@ -6,6 +6,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from apps.vehicles.models import (
+    Brand,
     VehicleListing,
     VehicleType,
     VehicleImage,
@@ -539,6 +540,7 @@ class VendorListingDetailSerializer(serializers.Serializer):
 
 class VehicleTypeOptionSerializer(serializers.ModelSerializer):
     brand = serializers.CharField(source="brand.name", read_only=True)
+    brand_id = serializers.IntegerField(source="brand.id", read_only=True)
 
     class Meta:
         model = VehicleType
@@ -546,6 +548,7 @@ class VehicleTypeOptionSerializer(serializers.ModelSerializer):
             "id",
             "name",
             "brand",
+            "brand_id",
             "make_year",
             "transmission_type",
             "fuel_type",
@@ -554,6 +557,12 @@ class VehicleTypeOptionSerializer(serializers.ModelSerializer):
             "cc",
             "primary_image",
         ]
+
+
+class BrandOptionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Brand
+        fields = ["id", "name"]
 
 
 class PackageTypeOptionSerializer(serializers.ModelSerializer):

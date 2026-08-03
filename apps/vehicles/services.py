@@ -3,6 +3,7 @@
 from datetime import datetime, timedelta
 from decimal import Decimal, ROUND_CEILING
 from apps.vehicles.repositories import (
+    BrandRepository,
     VehicleSearchRepository,
     AvailabilityRepository,
     VehicleDetailRepository,
@@ -1043,11 +1044,18 @@ class VendorListingDetailService:
         }
 
 
-class VehicleTypeService:
+class BrandService:
 
     @staticmethod
     def search(query: str | None = None):
-        return VehicleTypeRepository.search(query)
+        return BrandRepository.search(query)
+
+
+class VehicleTypeService:
+
+    @staticmethod
+    def search(query: str | None = None, brand_id: int | None = None):
+        return VehicleTypeRepository.search(query, brand_id)
 
 
 class PackageTypeService:

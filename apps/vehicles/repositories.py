@@ -11,10 +11,21 @@ from apps.vehicles.models import (
     VehicleReview,
     PricingPackageType,
     VendorPickupPoint,
+    Brand,
 )
 from apps.vendors.models import Vendor, VendorTerms, VendorSubscription
 from django.utils import timezone
 from datetime import datetime, time
+
+
+class BrandRepository:
+
+    @staticmethod
+    def search(query: str | None = None):
+        qs = Brand.objects.all().order_by("name")
+        if query:
+            qs = qs.filter(name__icontains=query)
+        return qs
 
 
 class VehicleSearchRepository:
@@ -663,14 +674,15 @@ class VendorFleetRepository:
 class VehicleTypeRepository:
 
     @staticmethod
-    def search(query: str | None = None):
+    def search(query: str | None = None, brand_id: int | None = None):
         """
-        Returns the full catalog regardless of is_published — that flag
-        gates customer search visibility, not whether a vendor may
-        create a listing against it. Confirm this reading if it
-        surfaces something unexpected in testing.
+        brand_id narrows to one brand's catalogue — used once a vendor
+        has picked a brand in the two-step picker. query still searches
+        name/brand name exactly as before; nothing removed, only added.
         """
         qs = VehicleType.objects.select_related("brand").order_by("brand__name", "name")
+        if brand_id:
+            qs = qs.filter(brand_id=brand_id)
         if query:
             qs = qs.filter(Q(name__icontains=query) | Q(brand__name__icontains=query))
         return qs

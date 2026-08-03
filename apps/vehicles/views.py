@@ -5,6 +5,7 @@ from rest_framework import status
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError
 from apps.vehicles.serializers import (
+    BrandOptionSerializer,
     VehicleSearchQuerySerializer,
     VehicleSearchResultSerializer,
     VehicleReviewItemSerializer,
@@ -26,6 +27,7 @@ from apps.vehicles.serializers import (
     VendorPickupPointSerializer,
 )
 from apps.vehicles.services import (
+    BrandService,
     VehicleSearchService,
     VehicleReviewService,
     VehicleReviewService,
@@ -526,9 +528,33 @@ class VendorListingDetailView(GenericAPIView):
         )
 
 
+class BrandOptionsView(GenericAPIView):
+    """
+    GET /api/vehicles/vendor/brands/?search=...
+    Unpaginated — brand catalogue is small and bounded, same reasoning
+    as PackageTypeOptionsView.
+    """
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = BrandOptionSerializer
+
+    def get(self, request):
+        query = request.query_params.get("search")
+        queryset = BrandService.search(query)
+        serializer = self.get_serializer(queryset, many=True)
+        return success_response(
+            data=serializer.data,
+            message="Brands retrieved successfully",
+            status=status.HTTP_200_OK,
+        )
+
+
 class VehicleTypeOptionsView(GenericAPIView):
     """
-    GET /api/vehicles/vendor/vehicle-types/?search=...
+    GET /api/vehicles/vendor/vehicle-types/?search=...&brand_id=...
+    brand_id is optional — when present, narrows to that brand's
+    catalogue (the two-step brand -> vehicle type picker). search
+    still works standalone, unchanged for any existing caller.
     """
 
     permission_classes = [IsAuthenticated]
@@ -537,7 +563,9 @@ class VehicleTypeOptionsView(GenericAPIView):
 
     def get(self, request):
         query = request.query_params.get("search")
-        queryset = VehicleTypeService.search(query)
+        raw_brand_id = request.query_params.get("brand_id")
+        brand_id = int(raw_brand_id) if raw_brand_id else None
+        queryset = VehicleTypeService.search(query, brand_id)
         page = self.paginate_queryset(queryset)
         serializer = self.get_serializer(page, many=True)
         paginated_response = self.get_paginated_response(serializer.data)

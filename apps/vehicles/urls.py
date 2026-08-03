@@ -1,5 +1,6 @@
 from django.urls import path
 from apps.vehicles.views import (
+    BrandOptionsView,
     LocationTimingView,
     PackageTypeOptionsView,
     VehicleDetailView,
@@ -93,4 +94,5 @@ urlpatterns = [
         VendorPickupPointDetailView.as_view(),
         name="vendor-pickup-point-detail",
     ),
+    path("vendor/brands/", BrandOptionsView.as_view(), name="vendor-brands"),
 ]
