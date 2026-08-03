@@ -49,12 +49,7 @@ class VehicleType(BaseModel):
 
     name = models.CharField(max_length=200)
     brand = models.ForeignKey(
-        Brand,
-        on_delete=models.PROTECT,
-        related_name="vehicle_types",
-        db_index=True,
-        null=True,
-        blank=True,
+        Brand, on_delete=models.PROTECT, related_name="vehicle_types", db_index=True
     )
     make_year = models.PositiveIntegerField()
     transmission_type = models.CharField(
