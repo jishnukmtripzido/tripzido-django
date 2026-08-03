@@ -56,18 +56,14 @@ class VehicleSearchRepository:
 
     @staticmethod
     def get_vehicle_types_for_listings(active_listings):
-        """Returns published VehicleTypes that have listings in the given queryset."""
         return (
             VehicleType.objects.filter(is_published=True, listings__in=active_listings)
             .distinct()
+            .select_related("brand")
             .prefetch_related(
-                Prefetch(
-                    "listings",
-                    queryset=active_listings,
-                    to_attr="city_listings",
-                ),
+                Prefetch("listings", queryset=active_listings, to_attr="city_listings"),
             )
-            .order_by("brand", "name")
+            .order_by("brand__name", "name")
         )
 
 
@@ -481,7 +477,9 @@ class VendorFleetRepository:
         """
         return (
             VehicleListing.objects.filter(vendor_id=vendor_id)
-            .select_related("vehicle_type", "pickup_location", "pickup_point")
+            .select_related(
+                "vehicle_type", "vehicle_type__brand", "pickup_location", "pickup_point"
+            )
             .prefetch_related(
                 Prefetch(
                     "images",
@@ -507,6 +505,7 @@ class VendorFleetRepository:
             VehicleListing.objects.filter(id=listing_id, vendor_id=vendor_id)
             .select_related(
                 "vehicle_type",
+                "vehicle_type__brand",
                 "pickup_location__city",
                 "schedule_template",
                 "pickup_point",
@@ -671,9 +670,9 @@ class VehicleTypeRepository:
         create a listing against it. Confirm this reading if it
         surfaces something unexpected in testing.
         """
-        qs = VehicleType.objects.all().order_by("brand", "name")
+        qs = VehicleType.objects.select_related("brand").order_by("brand__name", "name")
         if query:
-            qs = qs.filter(Q(name__icontains=query) | Q(brand__icontains=query))
+            qs = qs.filter(Q(name__icontains=query) | Q(brand__name__icontains=query))
         return qs
 
     @staticmethod

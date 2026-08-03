@@ -3,6 +3,7 @@ from django.utils import timezone
 
 from apps.core.admin import SoftDeleteAdmin
 from apps.vehicles.models import (
+    Brand,
     DoorstepDeliveryTier,
     PackageCategory,
     PricingPackage,
@@ -15,6 +16,13 @@ from apps.vehicles.models import (
     ListingBlockedPeriod,
     VehicleReview,
 )
+
+
+@admin.register(Brand)
+class BrandAdmin(SoftDeleteAdmin):
+    list_display = ("name", "is_deleted_display")
+    search_fields = ("name",)
+    readonly_fields = ("is_deleted_display",)
 
 
 @admin.register(VehicleType)

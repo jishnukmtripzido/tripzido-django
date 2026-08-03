@@ -52,6 +52,8 @@ class VehicleSearchQuerySerializer(serializers.Serializer):
 
 
 class VehicleTypeSerializer(serializers.ModelSerializer):
+    brand = serializers.CharField(source="brand.name", read_only=True)
+
     class Meta:
         model = VehicleType
         fields = [
@@ -196,6 +198,7 @@ class VehicleSearchResultSerializer(serializers.ModelSerializer):
     """
 
     locations = serializers.SerializerMethodField()
+    brand = serializers.CharField(source="brand.name", read_only=True)
 
     class Meta:
         model = VehicleType
@@ -400,7 +403,7 @@ class VendorFleetListingSerializer(serializers.ModelSerializer):
     """
 
     name = serializers.CharField(source="vehicle_type.name")
-    brand = serializers.CharField(source="vehicle_type.brand")
+    brand = serializers.CharField(source="vehicle_type.brand.name")
     vehicle_type = serializers.CharField(source="vehicle_type.vehicle_type")
     location_name = serializers.CharField(source="pickup_location.name")
     quantity = serializers.IntegerField(source="available_count")
@@ -535,6 +538,8 @@ class VendorListingDetailSerializer(serializers.Serializer):
 
 
 class VehicleTypeOptionSerializer(serializers.ModelSerializer):
+    brand = serializers.CharField(source="brand.name", read_only=True)
+
     class Meta:
         model = VehicleType
         fields = [

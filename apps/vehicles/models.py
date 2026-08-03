@@ -7,8 +7,20 @@ from datetime import time
 from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator
 
-
 # Create your models here.
+
+
+# apps/vehicles/models.py
+class Brand(BaseModel):
+    name = models.CharField(max_length=100, unique=True, db_index=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
+
+
 class VehicleType(BaseModel):
     """
     Master vehicle catalogue entry created by Tripzido admin.
@@ -36,7 +48,14 @@ class VehicleType(BaseModel):
         VAN = "VAN", "Van"
 
     name = models.CharField(max_length=200)
-    brand = models.CharField(max_length=100, db_index=True)
+    brand = models.ForeignKey(
+        Brand,
+        on_delete=models.PROTECT,
+        related_name="vehicle_types",
+        db_index=True,
+        null=True,
+        blank=True,
+    )
     make_year = models.PositiveIntegerField()
     transmission_type = models.CharField(
         max_length=20, choices=TransmissionType.choices

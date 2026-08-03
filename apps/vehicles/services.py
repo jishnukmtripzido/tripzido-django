@@ -964,7 +964,7 @@ class VendorListingDetailService:
             "vehicle_type": {
                 "id": vt.pk,
                 "name": vt.name,
-                "brand": vt.brand,
+                "brand": vt.brand.name if vt.brand else None,
                 "make_year": vt.make_year,
                 "transmission_type": vt.transmission_type,
                 "fuel_type": vt.fuel_type,
