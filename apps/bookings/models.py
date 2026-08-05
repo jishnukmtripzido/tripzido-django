@@ -24,12 +24,12 @@ class Booking(BaseModel):
 
     class Status(models.TextChoices):
         PENDING_PAYMENT = "PENDING_PAYMENT", "Pending Payment"
-        CONFIRMED = "CONFIRMED", "Confirmed (Upcoming)"
+        CONFIRMED = "CONFIRMED", "Confirmed"
         ONGOING = "ONGOING", "Ongoing"
         COMPLETED = "COMPLETED", "Completed"
         CANCELLED = "CANCELLED", "Cancelled"
         PAYMENT_FAILED = "PAYMENT_FAILED", "Payment Failed"
-        EXPIRED = "EXPIRED", "Expired (Unpaid)"
+        EXPIRED = "EXPIRED", "Expired"
 
     class PaymentMode(models.TextChoices):
         FULL = "FULL", "Full Payment"
