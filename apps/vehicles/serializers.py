@@ -819,3 +819,12 @@ class VendorListingDetailSerializer(serializers.Serializer):
     schedule = VendorListingScheduleSerializer()
     policies = VendorListingPoliciesSerializer()
     created_at = serializers.DateTimeField()
+
+
+class VendorListingStatusSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    status = serializers.CharField()
+    status_label = serializers.SerializerMethodField()
+
+    def get_status_label(self, obj):
+        return obj.get_status_display()

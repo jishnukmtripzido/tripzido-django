@@ -860,6 +860,10 @@ class VendorFleetService:
     def get_fleet_for_vendor(vendor_id: int):
         return VendorFleetRepository.get_listings_for_vendor(vendor_id)
 
+    @staticmethod
+    def toggle_active_status(listing_id: int, vendor_id: int):
+        return VendorFleetRepository.toggle_active_status(listing_id, vendor_id)
+
 
 class VendorListingDetailService:
 

@@ -24,6 +24,7 @@ from apps.vehicles.serializers import (
     VendorBlockedPeriodCreateSerializer,
     VendorBlockedPeriodUpdateSerializer,
     ScheduleTemplateCreateSerializer,
+    VendorListingStatusSerializer,
     VendorPickupPointSerializer,
     VendorListingUpdateSerializer,
 )
@@ -1143,4 +1144,41 @@ class VendorPickupPointDetailView(GenericAPIView):
             data=None,
             message="Pickup point deleted successfully",
             status=status.HTTP_204_NO_CONTENT,
+        )
+
+
+class VendorListingActiveToggleView(GenericAPIView):
+    """
+    PATCH /api/vehicles/vendor/fleet/<int:listing_id>/toggle-active/
+    No request body needed — flips APPROVED<->PAUSED. Powers the
+    on/off switch on the vendor's Fleet card.
+    """
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = VendorListingStatusSerializer
+
+    def patch(self, request, listing_id: int):
+        vendor = getattr(request.user, "vendor_profile", None)
+        if vendor is None:
+            return error_response(
+                message="This account has no vendor profile.",
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        listing, error = VendorFleetService.toggle_active_status(listing_id, vendor.id)
+        if error == "not_found":
+            return error_response(
+                message="Listing not found", status=status.HTTP_404_NOT_FOUND
+            )
+        if error == "not_toggleable":
+            return error_response(
+                message="Only active or paused listings can be toggled this way.",
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = self.get_serializer(listing)
+        return success_response(
+            data=serializer.data,
+            message="Listing status updated successfully",
+            status=status.HTTP_200_OK,
         )

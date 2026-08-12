@@ -18,6 +18,7 @@ from apps.vehicles.views import (
     VendorBlockedPeriodListCreateView,
     VendorBlockedPeriodDetailView,
     VendorScheduleTemplateDetailView,
+    VendorListingActiveToggleView,
 )
 
 urlpatterns = [
@@ -95,4 +96,9 @@ urlpatterns = [
         name="vendor-pickup-point-detail",
     ),
     path("vendor/brands/", BrandOptionsView.as_view(), name="vendor-brands"),
+    path(
+        "vendor/fleet/<int:listing_id>/toggle-active/",
+        VendorListingActiveToggleView.as_view(),
+        name="vendor-listing-toggle-active",
+    ),
 ]

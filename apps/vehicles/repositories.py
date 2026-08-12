@@ -670,6 +670,40 @@ class VendorFleetRepository:
         PricingPackage.objects.bulk_create(package_rows)
         return listing
 
+    @staticmethod
+    def toggle_active_status(listing_id: int, vendor_id: int):
+        """
+        Flips a vendor-controlled listing between APPROVED (live/
+        bookable) and PAUSED (vendor has temporarily hidden it) — the
+        on/off switch on the Fleet card. Scoped to (listing_id,
+        vendor_id), same IDOR-safe pattern as every other vendor-fleet
+        method here.
+
+        Deliberately only toggles from APPROVED or PAUSED — PENDING,
+        SUSPENDED, and REJECTED are states the vendor doesn't control
+        (admin-approval-pending or admin-imposed), so this returns
+        (None, "not_toggleable") for those rather than silently
+        no-op'ing or doing something unexpected.
+        """
+        listing = VehicleListing.objects.filter(
+            id=listing_id, vendor_id=vendor_id
+        ).first()
+        if listing is None:
+            return None, "not_found"
+
+        if listing.status == VehicleListing.Status.APPROVED:
+            listing.status = VehicleListing.Status.PAUSED
+            listing.paused_at = timezone.now()
+            listing.save(update_fields=["status", "paused_at"])
+        elif listing.status == VehicleListing.Status.PAUSED:
+            listing.status = VehicleListing.Status.APPROVED
+            listing.paused_at = None
+            listing.save(update_fields=["status", "paused_at"])
+        else:
+            return None, "not_toggleable"
+
+        return listing, None
+
 
 class VehicleTypeRepository:
 
