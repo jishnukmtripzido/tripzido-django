@@ -25,6 +25,7 @@ from apps.vehicles.serializers import (
     VendorBlockedPeriodUpdateSerializer,
     ScheduleTemplateCreateSerializer,
     VendorPickupPointSerializer,
+    VendorListingUpdateSerializer,
 )
 from apps.vehicles.services import (
     BrandService,

@@ -1256,10 +1256,10 @@ class VendorListingUpdateService:
         return VendorFleetRepository.update_listing(
             listing,
             pickup_location,
+            pickup_point,
             schedule_template,
             listing_fields,
             packages,
-            pickup_point,
         )
 
 
