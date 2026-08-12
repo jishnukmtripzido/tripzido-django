@@ -10,6 +10,7 @@ from apps.vehicles.models import (
     PricingPackageType,
     VehicleImage,
     VehicleListing,
+    VendorPickupPoint,
     VehicleType,
     OperatingScheduleTemplate,
     TemplateScheduleDay,
@@ -65,6 +66,20 @@ class VehicleListingAdmin(SoftDeleteAdmin):
         "pickup_location__name",
     )
     readonly_fields = ("is_deleted_display", "approved_at", "suspended_at", "paused_at")
+
+
+@admin.register(VendorPickupPoint)
+class VendorPickupPointAdmin(SoftDeleteAdmin):
+    list_display = (
+        "vendor",
+        "pickup_location",
+        "label",
+        "address",
+        "is_deleted_display",
+    )
+    list_filter = ("vendor", "pickup_location")
+    search_fields = ("vendor__business_name", "label", "address")
+    readonly_fields = ("is_deleted_display",)
 
 
 @admin.register(PackageCategory)
