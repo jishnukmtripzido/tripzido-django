@@ -1,5 +1,16 @@
 from django.urls import path
 from apps.vehicles.views import (
+    AdminBrandDetailView,
+    AdminBrandListCreateView,
+    AdminVehicleTypeListCreateView,
+    AdminVehicleTypeDetailView,
+    AdminPackageCategoryListCreateView,
+    AdminPackageCategoryDetailView,
+    AdminPricingPackageTypeListCreateView,
+    AdminPricingPackageTypeDetailView,
+    AdminListingDetailView,
+    AdminListingListView,
+    AdminListingStatusUpdateView,
     BrandOptionsView,
     LocationTimingView,
     PackageTypeOptionsView,
@@ -100,5 +111,52 @@ urlpatterns = [
         "vendor/fleet/<int:listing_id>/toggle-active/",
         VendorListingActiveToggleView.as_view(),
         name="vendor-listing-toggle-active",
+    ),
+    path("admin/listings/", AdminListingListView.as_view(), name="admin-listing-list"),
+    path(
+        "admin/listings/<int:listing_id>/",
+        AdminListingDetailView.as_view(),
+        name="admin-listing-detail",
+    ),
+    path(
+        "admin/listings/<int:listing_id>/status/",
+        AdminListingStatusUpdateView.as_view(),
+        name="admin-listing-status",
+    ),
+    path("admin/brands/", AdminBrandListCreateView.as_view(), name="admin-brands"),
+    path(
+        "admin/brands/<int:brand_id>/",
+        AdminBrandDetailView.as_view(),
+        name="admin-brand-detail",
+    ),
+    path(
+        "admin/vehicle-types/",
+        AdminVehicleTypeListCreateView.as_view(),
+        name="admin-vehicle-types",
+    ),
+    path(
+        "admin/vehicle-types/<int:vehicle_type_id>/",
+        AdminVehicleTypeDetailView.as_view(),
+        name="admin-vehicle-type-detail",
+    ),
+    path(
+        "admin/package-categories/",
+        AdminPackageCategoryListCreateView.as_view(),
+        name="admin-package-categories",
+    ),
+    path(
+        "admin/package-categories/<int:category_id>/",
+        AdminPackageCategoryDetailView.as_view(),
+        name="admin-package-category-detail",
+    ),
+    path(
+        "admin/package-types/",
+        AdminPricingPackageTypeListCreateView.as_view(),
+        name="admin-package-types",
+    ),
+    path(
+        "admin/package-types/<int:package_type_id>/",
+        AdminPricingPackageTypeDetailView.as_view(),
+        name="admin-package-type-detail",
     ),
 ]

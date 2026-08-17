@@ -1,4 +1,5 @@
-from .models import User
+from .models import User, Role, UserRoleAssignment
+from django.db.models import Q
 import phonenumbers
 
 
@@ -79,3 +80,108 @@ class UserRepository:
         user.set_unusable_password()
         user.save()
         return user
+
+
+class AdminUserRepository:
+
+    STAFF_ROLES = [Role.SystemRole.SUPPORT, Role.SystemRole.SUPER_ADMIN]
+
+    @staticmethod
+    def get_customers(search=None):
+        # "Customer" = anyone NOT currently holding VENDOR/SUPPORT/
+        # SUPER_ADMIN. Broader than requiring a CUSTOMER
+        # UserRoleAssignment to exist, since it's unconfirmed that
+        # signup always creates one — this definition can't
+        # accidentally exclude a real customer.
+        qs = (
+            User.objects.exclude(
+                role_assignments__role__system_role__in=[
+                    Role.SystemRole.VENDOR,
+                    Role.SystemRole.SUPPORT,
+                    Role.SystemRole.SUPER_ADMIN,
+                ]
+            )
+            .distinct()
+            .order_by("-created_at")
+        )
+        if search:
+            qs = qs.filter(
+                Q(phone_number__icontains=search)
+                | Q(first_name__icontains=search)
+                | Q(last_name__icontains=search)
+                | Q(email__icontains=search)
+            )
+        return qs
+
+    @staticmethod
+    def get_by_id(user_id: int):
+        return User.objects.filter(id=user_id).first()
+
+    @staticmethod
+    def get_staff(role_filter=None):
+        qs = (
+            UserRoleAssignment.objects.filter(
+                role__system_role__in=AdminUserRepository.STAFF_ROLES
+            )
+            .select_related("user", "role", "assigned_by")
+            .order_by("-created_at")
+        )
+        if role_filter:
+            qs = qs.filter(role__system_role=role_filter)
+        return qs
+
+    @staticmethod
+    def create_staff(data: dict, admin_user):
+        user, _ = User.objects.get_or_create(
+            phone_number=data["phone_number"],
+            defaults={
+                "phone_country_code": data.get("phone_country_code", "+91"),
+                "first_name": data.get("first_name", ""),
+                "last_name": data.get("last_name", ""),
+                "email": data["email"],
+            },
+        )
+        # If the user already existed (e.g. promoting an existing
+        # customer to staff), keep their phone/history but make sure
+        # email + password are actually set so they can log into the
+        # admin portal.
+        user.email = data["email"]
+        user.set_password(data["password"])
+        if data.get("first_name"):
+            user.first_name = data["first_name"]
+        if data.get("last_name"):
+            user.last_name = data["last_name"]
+        user.save()
+
+        role, _ = Role.objects.get_or_create(
+            system_role=data["role"],
+            defaults={"is_system": True},
+        )
+        assignment, _ = UserRoleAssignment.objects.get_or_create(
+            user=user,
+            role=role,
+            defaults={"assigned_by": admin_user},
+        )
+        return assignment
+
+    @staticmethod
+    def remove_staff_assignment(assignment_id: int):
+        assignment = (
+            UserRoleAssignment.objects.filter(id=assignment_id)
+            .select_related("role")
+            .first()
+        )
+        if assignment is None:
+            return False, "not_found"
+        if assignment.role.system_role == Role.SystemRole.SUPER_ADMIN:
+            remaining = (
+                UserRoleAssignment.objects.filter(
+                    role__system_role=Role.SystemRole.SUPER_ADMIN
+                )
+                .exclude(id=assignment_id)
+                .count()
+            )
+            if remaining == 0:
+                return False, "last_super_admin"
+        assignment.delete()
+        return True, None

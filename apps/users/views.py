@@ -1,38 +1,38 @@
-from django.shortcuts import render
-
-# Create your views here.
 # apps/users/views.py
 
 from rest_framework.views import APIView
-from rest_framework.response import Response
+from rest_framework.generics import GenericAPIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
-from apps.users.models import User
 from rest_framework import status
+import random
+import json
+import requests
 from django.core.cache import cache
 from django.conf import settings
 from drf_spectacular.utils import extend_schema
-from drf_spectacular.openapi import OpenApiParameter
-from drf_spectacular.types import OpenApiTypes
-import random
-import json
-from .services import UserService
+
+from apps.users.models import User
 from apps.core.responses import success_response, error_response
+from apps.core.permissions import IsStaffRole
+from apps.core.pagination import CustomPagination
+from .services import UserService, AdminUserService
 from .serializers import (
     SendOTPSerializer,
     VerifyOTPSerializer,
     RegisterSendOTPSerializer,
     RegisterVerifyOTPSerializer,
+    ProfileSerializer,
+    ProfileUpdateSerializer,
+    StaffLoginSerializer,
+    AdminUserListSerializer,
+    AdminUserDetailSerializer,
+    AdminUserStatusUpdateSerializer,
+    AdminStaffCreateSerializer,
+    AdminStaffListItemSerializer,
 )
 from .tasks import send_otp_sms
-import requests
-from rest_framework.generics import GenericAPIView
-from rest_framework.permissions import IsAuthenticated
-from rest_framework import status
-from apps.core.responses import success_response, error_response
-from .services import UserService
-from .serializers import ProfileSerializer, ProfileUpdateSerializer
-from .repositories import normalize_phone  # shared helper — single source of truth
+from .repositories import normalize_phone
 
 
 class SendOTPView(APIView):
@@ -462,4 +462,221 @@ class RegisterVerifyOTPView(APIView):
                 "refresh_token": str(refresh),
             },
             status=status.HTTP_200_OK,
+        )
+
+
+class StaffLoginView(APIView):
+    """
+    POST /api/users/staff/login/
+    Username(email)+password login for the admin portal — a separate
+    flow from the OTP-based login every other app (customer/vendor)
+    uses. Deliberately bypasses Django's authenticate(): this
+    codebase's USERNAME_FIELD is phone-based (OTP-only auth), so
+    there's no guarantee an email-based auth backend is configured.
+    Looking the user up by email and calling check_password()
+    directly works regardless of what AUTHENTICATION_BACKENDS is set
+    to, without needing to touch that setting.
+    """
+
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = StaffLoginSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid data",
+                errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        email = serializer.validated_data["email"]
+        password = serializer.validated_data["password"]
+
+        user = User.objects.filter(email__iexact=email).first()
+        if (
+            user is None
+            or not user.has_usable_password()
+            or not user.check_password(password)
+        ):
+            return error_response(
+                message="Invalid email or password.",
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        if not (user.has_role("SUPER_ADMIN") or user.has_role("SUPPORT")):
+            return error_response(
+                message="This account does not have admin access.",
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        refresh = RefreshToken.for_user(user)
+        role = "SUPER_ADMIN" if user.has_role("SUPER_ADMIN") else "SUPPORT"
+
+        return success_response(
+            message="Login successful",
+            data={
+                "access_token": str(refresh.access_token),
+                "refresh_token": str(refresh),
+                "role": role,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+                "email": user.email,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class AdminCustomerListView(GenericAPIView):
+    """GET /api/users/admin/customers/?search=&page="""
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+    serializer_class = AdminUserListSerializer
+    pagination_class = CustomPagination
+
+    def get(self, request):
+        search = request.query_params.get("search")
+        queryset = AdminUserService.get_customers(search)
+        page = self.paginate_queryset(queryset)
+        serializer = self.get_serializer(page, many=True)
+        paginated_response = self.get_paginated_response(serializer.data)
+        return success_response(
+            data=paginated_response.data,
+            message="Customers retrieved successfully",
+            status=status.HTTP_200_OK,
+        )
+
+
+class AdminCustomerDetailView(GenericAPIView):
+    """GET /api/users/admin/customers/<int:user_id>/"""
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+    serializer_class = AdminUserDetailSerializer
+
+    def get(self, request, user_id: int):
+        user = AdminUserService.get_detail(user_id)
+        if user is None:
+            return error_response(
+                message="User not found", status=status.HTTP_404_NOT_FOUND
+            )
+        serializer = self.get_serializer(user)
+        return success_response(
+            data=serializer.data,
+            message="User retrieved successfully",
+            status=status.HTTP_200_OK,
+        )
+
+
+class AdminCustomerStatusUpdateView(GenericAPIView):
+    """PATCH /api/users/admin/customers/<int:user_id>/status/"""
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+    serializer_class = AdminUserStatusUpdateSerializer
+
+    def patch(self, request, user_id: int):
+        serializer = AdminUserStatusUpdateSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid data",
+                errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        user, error = AdminUserService.update_status(
+            user_id,
+            serializer.validated_data["status"],
+            serializer.validated_data["reason"],
+        )
+        if user is None:
+            code = (
+                status.HTTP_404_NOT_FOUND
+                if error == "User not found"
+                else status.HTTP_400_BAD_REQUEST
+            )
+            return error_response(message=error, status=code)
+        output = AdminUserDetailSerializer(user)
+        return success_response(
+            data=output.data,
+            message="User status updated successfully",
+            status=status.HTTP_200_OK,
+        )
+
+
+class AdminStaffListCreateView(GenericAPIView):
+    """GET/POST /api/users/admin/staff/?role="""
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+    serializer_class = AdminStaffListItemSerializer
+
+    def get(self, request):
+        role_filter = request.query_params.get("role")
+        assignments = AdminUserService.get_staff(role_filter)
+        data = [
+            {
+                "assignment_id": a.id,
+                "user_id": a.user_id,
+                "full_name": a.user.get_full_name(),
+                "phone_number": a.user.phone_number,
+                "email": a.user.email,
+                "role": a.role.system_role,
+                "role_label": a.role.get_system_role_display(),
+                "assigned_at": a.created_at,
+                "assigned_by_name": (
+                    a.assigned_by.get_full_name() if a.assigned_by else None
+                ),
+            }
+            for a in assignments
+        ]
+        serializer = self.get_serializer(data, many=True)
+        return success_response(
+            data=serializer.data,
+            message="Staff retrieved successfully",
+            status=status.HTTP_200_OK,
+        )
+
+    def post(self, request):
+        serializer = AdminStaffCreateSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid data",
+                errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        assignment = AdminUserService.create_staff(
+            serializer.validated_data, request.user
+        )
+        return success_response(
+            data={
+                "assignment_id": assignment.id,
+                "user_id": assignment.user_id,
+                "full_name": assignment.user.get_full_name(),
+                "phone_number": assignment.user.phone_number,
+                "email": assignment.user.email,
+                "role": assignment.role.system_role,
+                "role_label": assignment.role.get_system_role_display(),
+            },
+            message="Staff member created successfully",
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class AdminStaffDetailView(GenericAPIView):
+    """DELETE /api/users/admin/staff/<int:assignment_id>/"""
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+    serializer_class = AdminStaffListItemSerializer
+
+    def delete(self, request, assignment_id: int):
+        deleted, error = AdminUserService.remove_staff(assignment_id)
+        if not deleted:
+            if error == "last_super_admin":
+                return error_response(
+                    message="Cannot remove the last remaining Super Admin — assign another one first.",
+                    status=status.HTTP_409_CONFLICT,
+                )
+            return error_response(
+                message="Staff assignment not found", status=status.HTTP_404_NOT_FOUND
+            )
+        return success_response(
+            data=None,
+            message="Staff role removed successfully",
+            status=status.HTTP_204_NO_CONTENT,
         )

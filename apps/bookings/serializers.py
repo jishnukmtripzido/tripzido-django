@@ -630,3 +630,149 @@ class AdminCancelBookingRequestSerializer(serializers.Serializer):
     refund_percentage_override = serializers.DecimalField(
         max_digits=5, decimal_places=2, required=False, min_value=0, max_value=100
     )
+
+
+class AdminBookingListSerializer(serializers.ModelSerializer):
+    vendor_name = serializers.CharField(
+        source="listing.vendor.business_name", read_only=True
+    )
+    customer_name = serializers.SerializerMethodField()
+    vehicle_name = serializers.SerializerMethodField()
+    status_label = serializers.CharField(source="get_status_display", read_only=True)
+    payment_mode_label = serializers.CharField(
+        source="get_payment_mode_display", read_only=True
+    )
+
+    class Meta:
+        model = Booking
+        fields = [
+            "id",
+            "booking_reference",
+            "vendor_name",
+            "customer_name",
+            "vehicle_name",
+            "pickup_date",
+            "dropoff_date",
+            "status",
+            "status_label",
+            "payment_mode",
+            "payment_mode_label",
+            "is_offline",
+            "net_amount",
+            "created_at",
+        ]
+
+    def get_customer_name(self, obj):
+        return (
+            f"{obj.customer.first_name} {obj.customer.last_name or ''}".strip()
+            or obj.customer.phone_number
+        )
+
+    def get_vehicle_name(self, obj):
+        vt = obj.listing.vehicle_type
+        return f"{vt.brand.name} {vt.name}"
+
+
+class AdminPaymentSummarySerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    payment_type = serializers.CharField()
+    amount = serializers.DecimalField(max_digits=12, decimal_places=2)
+    status = serializers.CharField()
+    gateway_order_id = serializers.CharField()
+    initiated_at = serializers.DateTimeField()
+    completed_at = serializers.DateTimeField(allow_null=True)
+
+
+class AdminBookingCancellationSerializer(serializers.Serializer):
+    reason_code = serializers.CharField()
+    reason_text = serializers.CharField(allow_blank=True)
+    cancelled_by_role = serializers.CharField()
+    hours_before_pickup_at_cancellation = serializers.DecimalField(
+        max_digits=8, decimal_places=2, allow_null=True
+    )
+    refund_percentage = serializers.DecimalField(max_digits=5, decimal_places=2)
+    refundable_amount = serializers.DecimalField(max_digits=12, decimal_places=2)
+    forfeited_amount = serializers.DecimalField(max_digits=12, decimal_places=2)
+    created_at = serializers.DateTimeField()
+
+
+class AdminBookingDetailSerializer(serializers.ModelSerializer):
+    vendor_id = serializers.IntegerField(source="listing.vendor_id", read_only=True)
+    vendor_name = serializers.CharField(
+        source="listing.vendor.business_name", read_only=True
+    )
+    customer_name = serializers.SerializerMethodField()
+    customer_phone = serializers.CharField(
+        source="customer.phone_number", read_only=True
+    )
+    vehicle_name = serializers.SerializerMethodField()
+    pickup_location_name = serializers.CharField(
+        source="pickup_location.name", read_only=True
+    )
+    status_label = serializers.CharField(source="get_status_display", read_only=True)
+    payment_mode_label = serializers.CharField(
+        source="get_payment_mode_display", read_only=True
+    )
+    payments = AdminPaymentSummarySerializer(many=True, read_only=True)
+    cancellation = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Booking
+        fields = [
+            "id",
+            "booking_reference",
+            "booking_group_id",
+            "vendor_id",
+            "vendor_name",
+            "customer_name",
+            "customer_phone",
+            "vehicle_name",
+            "pickup_location_name",
+            "pickup_date",
+            "pickup_time",
+            "dropoff_date",
+            "dropoff_time",
+            "status",
+            "status_label",
+            "payment_mode",
+            "payment_mode_label",
+            "is_offline",
+            "listing_amount",
+            "commission_amount",
+            "net_commission_amount",
+            "net_amount",
+            "advance_amount",
+            "remaining_amount",
+            "security_deposit_amount",
+            "vendor_tax_percentage",
+            "vendor_tax_amount",
+            "commission_tax_percentage",
+            "commission_tax_amount",
+            "handed_over_at",
+            "returned_at",
+            "cancelled_at",
+            "cancelled_by_role",
+            "payments",
+            "cancellation",
+            "created_at",
+        ]
+
+    def get_customer_name(self, obj):
+        return (
+            f"{obj.customer.first_name} {obj.customer.last_name or ''}".strip()
+            or obj.customer.phone_number
+        )
+
+    def get_vehicle_name(self, obj):
+        vt = obj.listing.vehicle_type
+        return f"{vt.brand.name} {vt.name}"
+
+    def get_cancellation(self, obj):
+        # Accessing obj.cancellation directly on a booking with no
+        # cancellation record raises RelatedObjectDoesNotExist rather
+        # than returning None — this getattr guard is what actually
+        # makes the field nullable.
+        cancellation = getattr(obj, "cancellation", None)
+        if cancellation is None:
+            return None
+        return AdminBookingCancellationSerializer(cancellation).data

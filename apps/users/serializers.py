@@ -1,6 +1,5 @@
 from rest_framework import serializers
-from rest_framework import serializers
-from apps.users.models import User
+from apps.users.models import User, Role
 
 
 class SendOTPSerializer(serializers.Serializer):
@@ -157,4 +156,94 @@ class RegisterVerifyOTPSerializer(serializers.Serializer):
         min_length=4,
         max_length=4,
         help_text="4-digit OTP sent via SMS",
+    )
+
+
+class StaffLoginSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    password = serializers.CharField(write_only=True, trim_whitespace=False)
+
+
+class AdminUserListSerializer(serializers.ModelSerializer):
+    full_name = serializers.CharField(source="get_full_name", read_only=True)
+    status_label = serializers.CharField(source="get_status_display", read_only=True)
+
+    class Meta:
+        model = User
+        fields = [
+            "id",
+            "phone_number",
+            "full_name",
+            "email",
+            "status",
+            "status_label",
+            "created_at",
+        ]
+
+
+class AdminUserDetailSerializer(serializers.ModelSerializer):
+    full_name = serializers.CharField(source="get_full_name", read_only=True)
+    status_label = serializers.CharField(source="get_status_display", read_only=True)
+
+    class Meta:
+        model = User
+        fields = [
+            "id",
+            "phone_number",
+            "phone_country_code",
+            "first_name",
+            "last_name",
+            "full_name",
+            "email",
+            "address",
+            "status",
+            "status_label",
+            "suspended_at",
+            "suspension_reason",
+            "banned_at",
+            "ban_reason",
+            "is_phone_blocked",
+            "created_at",
+        ]
+
+
+class AdminUserStatusUpdateSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(
+        choices=[
+            (User.AccountStatus.ACTIVE, "Active"),
+            (User.AccountStatus.SUSPENDED, "Suspended"),
+            (User.AccountStatus.BANNED, "Banned"),
+        ]
+    )
+    reason = serializers.CharField(required=False, allow_blank=True, default="")
+
+
+class AdminStaffListItemSerializer(serializers.Serializer):
+    assignment_id = serializers.IntegerField()
+    user_id = serializers.IntegerField()
+    full_name = serializers.CharField()
+    phone_number = serializers.CharField()
+    email = serializers.CharField(allow_blank=True, allow_null=True)
+    role = serializers.CharField()
+    role_label = serializers.CharField()
+    assigned_at = serializers.DateTimeField(required=False)
+    assigned_by_name = serializers.CharField(allow_null=True, required=False)
+
+
+class AdminStaffCreateSerializer(serializers.Serializer):
+    phone_number = serializers.CharField(max_length=15)
+    phone_country_code = serializers.CharField(max_length=5, default="+91")
+    email = serializers.EmailField()
+    password = serializers.CharField(min_length=8, write_only=True)
+    first_name = serializers.CharField(
+        max_length=50, required=False, allow_blank=True, default=""
+    )
+    last_name = serializers.CharField(
+        max_length=50, required=False, allow_blank=True, default=""
+    )
+    role = serializers.ChoiceField(
+        choices=[
+            (Role.SystemRole.SUPPORT, "Support"),
+            (Role.SystemRole.SUPER_ADMIN, "Super Admin"),
+        ]
     )

@@ -1,6 +1,19 @@
 # apps/vendors/services.py
-from apps.vendors.repositories import VendorTermsRepository, VendorDashboardRepository
+from apps.vendors.repositories import (
+    AdminBankAccountRepository,
+    AdminSubscriptionPlanRepository,
+    AdminVendorCommissionRepository,
+    AdminVendorDocumentRepository,
+    AdminVendorRepository,
+    AdminVendorSubscriptionRepository,
+    VendorTermsRepository,
+    VendorDashboardRepository,
+)
 from django.utils import timezone
+from django.db import transaction
+from django.db.models import ProtectedError
+
+from apps.vendors.models import BankAccount, SubscriptionPlan, Vendor, VendorDocument
 
 
 class VendorTermsService:
@@ -83,3 +96,221 @@ class VendorDashboardService:
             "fleet_blocked_units": fleet["blocked_units"],
             "recent_bookings": VendorDashboardRepository.get_recent_bookings(vendor.id),
         }
+
+
+class AdminVendorService:
+
+    # Mirrors the pattern from VendorBookingService.ALLOWED_TRANSITIONS
+    # earlier in this project — REJECTED and BANNED are terminal, no
+    # further admin transition from this endpoint. A rejected applicant
+    # would need to submit a fresh signup; banning is treated as
+    # permanent by design.
+    ALLOWED_TRANSITIONS = {
+        Vendor.Status.PENDING: [Vendor.Status.APPROVED, Vendor.Status.REJECTED],
+        Vendor.Status.APPROVED: [Vendor.Status.SUSPENDED, Vendor.Status.BANNED],
+        Vendor.Status.SUSPENDED: [Vendor.Status.APPROVED, Vendor.Status.BANNED],
+    }
+    REASON_REQUIRED_FOR = {
+        Vendor.Status.REJECTED,
+        Vendor.Status.SUSPENDED,
+        Vendor.Status.BANNED,
+    }
+
+    @staticmethod
+    def get_all(status_filter=None, search=None):
+        return AdminVendorRepository.get_all(status_filter, search)
+
+    @staticmethod
+    def get_detail(vendor_id: int):
+        return AdminVendorRepository.get_by_id(vendor_id)
+
+    @staticmethod
+    @transaction.atomic
+    def update_status(vendor_id: int, target_status: str, admin_user, reason: str = ""):
+        vendor = Vendor.objects.select_for_update().filter(id=vendor_id).first()
+        if vendor is None:
+            return None, "Vendor not found"
+
+        allowed = AdminVendorService.ALLOWED_TRANSITIONS.get(vendor.status, [])
+        if target_status not in allowed:
+            return None, (
+                f"Cannot change status from '{vendor.get_status_display()}' to '{target_status}'."
+            )
+        if (
+            target_status in AdminVendorService.REASON_REQUIRED_FOR
+            and not reason.strip()
+        ):
+            return None, "A reason is required for this action."
+
+        now = timezone.now()
+        was_suspended = vendor.status == Vendor.Status.SUSPENDED
+
+        if target_status == Vendor.Status.APPROVED and not was_suspended:
+            vendor.reviewed_by = admin_user
+            vendor.reviewed_at = now
+        elif target_status == Vendor.Status.APPROVED and was_suspended:
+            pass  # reactivation — suspension fields kept as historical record
+        elif target_status == Vendor.Status.REJECTED:
+            vendor.reviewed_by = admin_user
+            vendor.reviewed_at = now
+            vendor.rejection_reason = reason
+        elif target_status == Vendor.Status.SUSPENDED:
+            vendor.suspended_by = admin_user
+            vendor.suspended_at = now
+            vendor.suspension_reason = reason
+        elif target_status == Vendor.Status.BANNED:
+            vendor.banned_by = admin_user
+            vendor.banned_at = now
+            vendor.ban_reason = reason
+
+        vendor.status = target_status
+        vendor.save()
+        return vendor, None
+
+
+class AdminVendorDocumentService:
+
+    @staticmethod
+    def get_for_vendor(vendor_id: int):
+        return AdminVendorDocumentRepository.get_for_vendor(vendor_id)
+
+    @staticmethod
+    def review(doc_id: int, admin_user, new_status: str, rejection_reason: str = ""):
+        doc = AdminVendorDocumentRepository.get_by_id(doc_id)
+        if doc is None:
+            return None, "Document not found"
+        if doc.status != VendorDocument.Status.PENDING:
+            return None, "This document has already been reviewed."
+        if new_status not in (
+            VendorDocument.Status.VERIFIED,
+            VendorDocument.Status.REJECTED,
+        ):
+            return None, "Invalid target status."
+        if (
+            new_status == VendorDocument.Status.REJECTED
+            and not rejection_reason.strip()
+        ):
+            return None, "A rejection reason is required."
+
+        doc.status = new_status
+        doc.reviewed_by = admin_user
+        doc.reviewed_at = timezone.now()
+        if new_status == VendorDocument.Status.REJECTED:
+            doc.rejection_reason = rejection_reason
+        doc.save()
+        return doc, None
+
+
+class AdminBankAccountService:
+
+    @staticmethod
+    def get_for_vendor(vendor_id: int):
+        return AdminBankAccountRepository.get_for_vendor(vendor_id)
+
+    @staticmethod
+    def review(
+        account_id: int, admin_user, new_status: str, rejection_reason: str = ""
+    ):
+        account = AdminBankAccountRepository.get_by_id(account_id)
+        if account is None:
+            return None, "Bank account not found"
+        if account.status != BankAccount.Status.PENDING_VERIFICATION:
+            return None, "This account has already been reviewed."
+        if new_status not in (BankAccount.Status.VERIFIED, BankAccount.Status.REJECTED):
+            return None, "Invalid target status."
+        if new_status == BankAccount.Status.REJECTED and not rejection_reason.strip():
+            return None, "A rejection reason is required."
+
+        account.status = new_status
+        account.verified_by = admin_user
+        account.verified_at = timezone.now()
+        if new_status == BankAccount.Status.VERIFIED:
+            # A verified account becomes the vendor's active payout
+            # account — the model's own save() already auto-deactivates
+            # any other account for this vendor when is_active_acc=True
+            # is set, so this is the only line needed to make the switch.
+            account.is_active_acc = True
+        else:
+            account.rejection_reason = rejection_reason
+        account.save()
+        return account, None
+
+
+class AdminVendorCommissionService:
+
+    @staticmethod
+    def get_all():
+        return AdminVendorCommissionRepository.get_all()
+
+    @staticmethod
+    def create(data: dict):
+        return AdminVendorCommissionRepository.create(data)
+
+    @staticmethod
+    def update(commission_id: int, data: dict):
+        instance = AdminVendorCommissionRepository.get_by_id(commission_id)
+        if instance is None:
+            return None
+        return AdminVendorCommissionRepository.update(instance, data)
+
+    @staticmethod
+    def delete(commission_id: int):
+        instance = AdminVendorCommissionRepository.get_by_id(commission_id)
+        if instance is None:
+            return False, "not_found"
+        try:
+            AdminVendorCommissionRepository.delete(instance)
+        except ProtectedError:
+            return False, "in_use"
+        return True, None
+
+
+class AdminSubscriptionPlanService:
+
+    @staticmethod
+    def get_all():
+        return AdminSubscriptionPlanRepository.get_all()
+
+    @staticmethod
+    def get_detail(plan_id: int):
+        return AdminSubscriptionPlanRepository.get_by_id(plan_id)
+
+    @staticmethod
+    def create(data: dict):
+        return AdminSubscriptionPlanRepository.create(data)
+
+    @staticmethod
+    def update(plan_id: int, data: dict):
+        instance = AdminSubscriptionPlanRepository.get_by_id(plan_id)
+        if instance is None:
+            return None
+        return AdminSubscriptionPlanRepository.update(instance, data)
+
+    @staticmethod
+    def delete(plan_id: int):
+        instance = AdminSubscriptionPlanRepository.get_by_id(plan_id)
+        if instance is None:
+            return False, "not_found"
+        try:
+            AdminSubscriptionPlanRepository.delete(instance)
+        except ProtectedError:
+            return False, "in_use"
+        return True, None
+
+
+class AdminVendorSubscriptionService:
+
+    @staticmethod
+    def get_for_vendor(vendor_id: int):
+        return AdminVendorSubscriptionRepository.get_for_vendor(vendor_id)
+
+    @staticmethod
+    def assign(vendor_id: int, plan_id: int, admin_user):
+        if not Vendor.objects.filter(id=vendor_id).exists():
+            return None, "Vendor not found"
+        if not SubscriptionPlan.objects.filter(id=plan_id).exists():
+            return None, "Plan not found"
+        return (
+            AdminVendorSubscriptionRepository.assign(vendor_id, plan_id, admin_user),
+            None,
+        )

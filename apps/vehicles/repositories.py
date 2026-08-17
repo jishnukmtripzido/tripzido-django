@@ -976,3 +976,55 @@ class VendorPickupPointRepository:
             id=point_id, vendor_id=vendor_id
         ).delete()
         return deleted > 0
+
+
+class AdminListingRepository:
+
+    @staticmethod
+    def get_all(status_filter=None, vendor_id=None, search=None):
+        qs = VehicleListing.objects.select_related(
+            "vendor", "vehicle_type__brand", "pickup_location__city"
+        ).order_by("-created_at")
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+        if vendor_id:
+            qs = qs.filter(vendor_id=vendor_id)
+        if search:
+            qs = qs.filter(
+                Q(vehicle_type__name__icontains=search)
+                | Q(vehicle_type__brand__name__icontains=search)
+                | Q(vendor__business_name__icontains=search)
+            )
+        return qs
+
+    @staticmethod
+    def get_by_id(listing_id: int):
+        return (
+            VehicleListing.objects.filter(id=listing_id)
+            .select_related(
+                "vendor",
+                "vehicle_type__brand",
+                "pickup_location__city",
+                "pickup_point",
+                "schedule_template",
+                "approved_by",
+                "suspended_by",
+            )
+            .prefetch_related(
+                Prefetch(
+                    "images", queryset=VehicleImage.objects.order_by("sort_order")
+                ),
+                Prefetch(
+                    "pricing_packages",
+                    queryset=PricingPackage.objects.select_related(
+                        "package_type__category"
+                    ),
+                ),
+                Prefetch(
+                    "schedule_template__days",
+                    queryset=TemplateScheduleDay.objects.order_by("day_of_week"),
+                    to_attr="ordered_days",
+                ),
+            )
+            .first()
+        )

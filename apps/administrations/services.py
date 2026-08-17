@@ -1,18 +1,23 @@
+import json
+from datetime import datetime, timedelta
+from decimal import Decimal, InvalidOperation
+from django.core.cache import cache
+from django.db.models import Count, Sum
+from django.utils import timezone
 from apps.administrations.repositories import (
     AnnouncementBannerRepository,
     CancellationPolicyRepository,
+    LegalDocumentRepository,
     OfferRepository,
     PopularRentalRepository,
     PlatformConfigRepository,
     TaxRateRepository,
 )
-from apps.administrations.models import CancellationTier
-import json
-from decimal import Decimal, InvalidOperation
-from django.core.cache import cache
-from apps.administrations.repositories import LegalDocumentRepository
-from apps.administrations.models import LegalDocument, TaxRate
-from decimal import Decimal
+from apps.administrations.models import (
+    CancellationTier,
+    LegalDocument,
+    TaxRate,
+)
 
 
 class CancellationPolicyService:
@@ -237,4 +242,130 @@ class TaxCalculationService:
         return {
             "vendor_rental_tax": _freeze(vendor_tax),
             "platform_commission_tax": _freeze(commission_tax),
+        }
+
+
+def _trend_pct(current, previous) -> float:
+    if not previous:
+        return 100.0 if current else 0.0
+    return round(float((current - previous) / previous * 100), 1)
+
+
+class AdminDashboardService:
+
+    @staticmethod
+    def _month_bounds():
+        now = timezone.localtime()
+        this_month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        if this_month_start.month == 1:
+            last_month_start = this_month_start.replace(
+                year=this_month_start.year - 1, month=12
+            )
+        else:
+            last_month_start = this_month_start.replace(
+                month=this_month_start.month - 1
+            )
+        return this_month_start, now, last_month_start, this_month_start
+
+    @staticmethod
+    def get_dashboard():
+        from apps.vendors.models import Vendor
+        from apps.vehicles.models import VehicleListing
+        from apps.bookings.models import Booking
+        from apps.payments.models import VendorPayout
+        from apps.users.models import User, Role
+
+        this_start, now, last_start, last_end = AdminDashboardService._month_bounds()
+
+        # Platform's own commission revenue — deliberately NOT vendor
+        # gross revenue. Bucketed by returned_at (the moment a trip
+        # actually finished), same reasoning as the vendor dashboard's
+        # equivalent metric.
+        revenue_this_month = Booking.objects.filter(
+            status=Booking.Status.COMPLETED,
+            returned_at__gte=this_start,
+            returned_at__lt=now,
+        ).aggregate(total=Sum("net_commission_amount"))["total"] or Decimal("0")
+        revenue_last_month = Booking.objects.filter(
+            status=Booking.Status.COMPLETED,
+            returned_at__gte=last_start,
+            returned_at__lt=last_end,
+        ).aggregate(total=Sum("net_commission_amount"))["total"] or Decimal("0")
+
+        bookings_this_month = Booking.objects.filter(
+            created_at__gte=this_start, created_at__lt=now
+        ).count()
+        bookings_last_month = Booking.objects.filter(
+            created_at__gte=last_start, created_at__lt=last_end
+        ).count()
+
+        weekly_bars = []
+        today = timezone.localdate()
+        for i in range(6, -1, -1):
+            day = today - timedelta(days=i)
+            start = timezone.make_aware(datetime.combine(day, datetime.min.time()))
+            end = start + timedelta(days=1)
+            weekly_bars.append(
+                Booking.objects.filter(
+                    created_at__gte=start, created_at__lt=end
+                ).count()
+            )
+
+        vendors_this_month = Vendor.objects.filter(
+            created_at__gte=this_start, created_at__lt=now
+        ).count()
+        vendors_last_month = Vendor.objects.filter(
+            created_at__gte=last_start, created_at__lt=last_end
+        ).count()
+
+        status_rows = Booking.objects.values("status").annotate(count=Count("id"))
+        booking_status_counts = {row["status"]: row["count"] for row in status_rows}
+
+        pending_payouts = VendorPayout.objects.filter(
+            status=VendorPayout.Status.PENDING
+        )
+        pending_payout_amount = pending_payouts.aggregate(total=Sum("total_amount"))[
+            "total"
+        ] or Decimal("0")
+
+        total_customers = (
+            User.objects.exclude(
+                role_assignments__role__system_role__in=[
+                    Role.SystemRole.VENDOR,
+                    Role.SystemRole.SUPPORT,
+                    Role.SystemRole.SUPER_ADMIN,
+                ]
+            )
+            .distinct()
+            .count()
+        )
+
+        return {
+            "pending_vendor_approvals": Vendor.objects.filter(
+                status=Vendor.Status.PENDING
+            ).count(),
+            "pending_listing_approvals": VehicleListing.objects.filter(
+                status=VehicleListing.Status.PENDING_APPROVAL
+            ).count(),
+            "revenue_this_month": revenue_this_month,
+            "revenue_last_month": revenue_last_month,
+            "revenue_trend_pct": _trend_pct(revenue_this_month, revenue_last_month),
+            "bookings_this_month": bookings_this_month,
+            "bookings_last_month": bookings_last_month,
+            "bookings_trend_pct": _trend_pct(bookings_this_month, bookings_last_month),
+            "weekly_booking_bars": weekly_bars,
+            "active_vendors": Vendor.objects.filter(
+                status=Vendor.Status.APPROVED
+            ).count(),
+            "vendors_this_month": vendors_this_month,
+            "vendors_last_month": vendors_last_month,
+            "vendors_trend_pct": _trend_pct(vendors_this_month, vendors_last_month),
+            "total_customers": total_customers,
+            "booking_status_counts": booking_status_counts,
+            "pending_payout_amount": pending_payout_amount,
+            "pending_payout_count": pending_payouts.count(),
+            "recent_bookings": Booking.objects.select_related(
+                "listing__vendor", "listing__vehicle_type__brand", "customer"
+            ).order_by("-created_at")[:5],
+            "range_label": f"{this_start:%d %b %Y} - {now:%d %b %Y}",
         }

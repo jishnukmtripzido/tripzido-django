@@ -1,4 +1,5 @@
-from .repositories import UserRepository
+from .repositories import UserRepository, AdminUserRepository
+from .models import User
 
 
 class UserService:
@@ -50,3 +51,68 @@ class UserService:
             email=email,
             country_code=country_code,
         )
+
+
+class AdminUserService:
+
+    ALLOWED_TRANSITIONS = {
+        User.AccountStatus.ACTIVE: [
+            User.AccountStatus.SUSPENDED,
+            User.AccountStatus.BANNED,
+        ],
+        User.AccountStatus.SUSPENDED: [
+            User.AccountStatus.ACTIVE,
+            User.AccountStatus.BANNED,
+        ],
+    }
+    REASON_REQUIRED_FOR = {User.AccountStatus.SUSPENDED, User.AccountStatus.BANNED}
+
+    @staticmethod
+    def get_customers(search=None):
+        return AdminUserRepository.get_customers(search)
+
+    @staticmethod
+    def get_detail(user_id: int):
+        return AdminUserRepository.get_by_id(user_id)
+
+    @staticmethod
+    def update_status(user_id: int, target_status: str, reason: str = ""):
+        user = AdminUserRepository.get_by_id(user_id)
+        if user is None:
+            return None, "User not found"
+
+        allowed = AdminUserService.ALLOWED_TRANSITIONS.get(user.status, [])
+        if target_status not in allowed:
+            return (
+                None,
+                f"Cannot change status from '{user.get_status_display()}' to '{target_status}'.",
+            )
+        if target_status in AdminUserService.REASON_REQUIRED_FOR and not reason.strip():
+            return None, "A reason is required for this action."
+
+        from django.utils import timezone
+
+        now = timezone.now()
+        if target_status == User.AccountStatus.SUSPENDED:
+            user.suspended_at = now
+            user.suspension_reason = reason
+        elif target_status == User.AccountStatus.BANNED:
+            user.banned_at = now
+            user.ban_reason = reason
+        # ACTIVE (reactivation) — suspension fields kept as history
+
+        user.status = target_status
+        user.save()
+        return user, None
+
+    @staticmethod
+    def get_staff(role_filter=None):
+        return AdminUserRepository.get_staff(role_filter)
+
+    @staticmethod
+    def create_staff(data: dict, admin_user):
+        return AdminUserRepository.create_staff(data, admin_user)
+
+    @staticmethod
+    def remove_staff(assignment_id: int):
+        return AdminUserRepository.remove_staff_assignment(assignment_id)

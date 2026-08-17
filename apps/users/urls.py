@@ -8,6 +8,12 @@ from apps.users.views import (
     RegisterVerifyOTPView,
     VendorSendOTPView,  # ← new
     VendorVerifyOTPView,  # ← new
+    StaffLoginView,  # ← new
+    AdminCustomerListView,
+    AdminCustomerDetailView,
+    AdminCustomerStatusUpdateView,
+    AdminStaffListCreateView,
+    AdminStaffDetailView,
 )
 
 urlpatterns = [
@@ -26,4 +32,24 @@ urlpatterns = [
     # ── Login (vendor portal) ───────────────────────────────────────────────
     path("vendor/send-otp/", VendorSendOTPView.as_view(), name="vendor-send-otp"),
     path("vendor/verify-otp/", VendorVerifyOTPView.as_view(), name="vendor-verify-otp"),
+    path("staff/login/", StaffLoginView.as_view(), name="staff-login"),
+    path(
+        "admin/customers/", AdminCustomerListView.as_view(), name="admin-customer-list"
+    ),
+    path(
+        "admin/customers/<int:user_id>/",
+        AdminCustomerDetailView.as_view(),
+        name="admin-customer-detail",
+    ),
+    path(
+        "admin/customers/<int:user_id>/status/",
+        AdminCustomerStatusUpdateView.as_view(),
+        name="admin-customer-status",
+    ),
+    path("admin/staff/", AdminStaffListCreateView.as_view(), name="admin-staff-list"),
+    path(
+        "admin/staff/<int:assignment_id>/",
+        AdminStaffDetailView.as_view(),
+        name="admin-staff-detail",
+    ),
 ]

@@ -304,3 +304,34 @@ class PickupLocationOptionSerializer(serializers.ModelSerializer):
     class Meta:
         model = PickupLocation
         fields = ["id", "location_name", "city_id"]
+
+
+class AdminCountrySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Country
+        fields = ["id", "name", "code"]
+
+
+class AdminStateSerializer(serializers.ModelSerializer):
+    country_name = serializers.CharField(source="country.name", read_only=True)
+
+    class Meta:
+        model = State
+        fields = ["id", "country", "country_name", "name", "code"]
+
+
+class AdminCitySerializer(serializers.ModelSerializer):
+    state_name = serializers.CharField(source="state.name", read_only=True)
+    country_name = serializers.CharField(source="state.country.name", read_only=True)
+
+    class Meta:
+        model = City
+        fields = ["id", "state", "state_name", "country_name", "name", "city_image"]
+
+
+class AdminPickupLocationSerializer(serializers.ModelSerializer):
+    city_name = serializers.CharField(source="city.name", read_only=True)
+
+    class Meta:
+        model = PickupLocation
+        fields = ["id", "city", "city_name", "name", "address", "latitude", "longitude"]

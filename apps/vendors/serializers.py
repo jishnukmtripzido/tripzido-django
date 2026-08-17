@@ -1,6 +1,14 @@
 # apps/vendors/serializers.py
 from rest_framework import serializers
 from apps.bookings.serializers import VendorBookingListSerializer
+from apps.vendors.models import (
+    SubscriptionPlan,
+    VendorSubscription,
+    Vendor,
+    VendorDocument,
+    BankAccount,
+    VendorCommission,
+)
 
 
 class VendorTermsSerializer(serializers.Serializer):
@@ -58,3 +66,225 @@ class VendorDashboardSerializer(serializers.Serializer):
     fleet_pending_approval = serializers.IntegerField()
     fleet_blocked_units = serializers.IntegerField()
     recent_bookings = VendorBookingListSerializer(many=True)
+
+
+class AdminVendorListSerializer(serializers.ModelSerializer):
+    status_label = serializers.CharField(source="get_status_display")
+
+    class Meta:
+        model = Vendor
+        fields = [
+            "id",
+            "business_name",
+            "owner_name",
+            "email",
+            "phone_number",
+            "gst_number",
+            "status",
+            "status_label",
+            "created_at",
+        ]
+
+
+class AdminVendorSubscriptionSummarySerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    plan_name = serializers.CharField(source="plan.name")
+    status = serializers.CharField()
+    started_at = serializers.DateTimeField(allow_null=True)
+    expires_at = serializers.DateTimeField(allow_null=True)
+
+
+class AdminVendorDetailSerializer(serializers.ModelSerializer):
+    status_label = serializers.CharField(source="get_status_display")
+    reviewed_by_name = serializers.SerializerMethodField()
+    suspended_by_name = serializers.SerializerMethodField()
+    banned_by_name = serializers.SerializerMethodField()
+    current_subscription = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Vendor
+        fields = [
+            "id",
+            "business_name",
+            "owner_name",
+            "email",
+            "phone_number",
+            "address",
+            "gst_number",
+            "logo_image",
+            "status",
+            "status_label",
+            "rejection_reason",
+            "reviewed_by_name",
+            "reviewed_at",
+            "suspended_by_name",
+            "suspended_at",
+            "suspension_reason",
+            "banned_by_name",
+            "banned_at",
+            "ban_reason",
+            "current_subscription",
+            "created_at",
+        ]
+
+    def get_reviewed_by_name(self, obj):
+        return obj.reviewed_by.get_full_name() if obj.reviewed_by else None
+
+    def get_suspended_by_name(self, obj):
+        return obj.suspended_by.get_full_name() if obj.suspended_by else None
+
+    def get_banned_by_name(self, obj):
+        return obj.banned_by.get_full_name() if obj.banned_by else None
+
+    def get_current_subscription(self, obj):
+        sub = (
+            VendorSubscription.objects.filter(vendor=obj, is_current=True)
+            .select_related("plan")
+            .first()
+        )
+        if sub is None:
+            return None
+        return AdminVendorSubscriptionSummarySerializer(sub).data
+
+
+class AdminVendorStatusUpdateSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=Vendor.Status.choices)
+    reason = serializers.CharField(required=False, allow_blank=True, default="")
+
+
+class AdminVendorDocumentSerializer(serializers.ModelSerializer):
+    status_label = serializers.CharField(source="get_status_display")
+    doc_type_label = serializers.CharField(source="get_doc_type_display")
+    reviewed_by_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = VendorDocument
+        fields = [
+            "id",
+            "doc_type",
+            "doc_type_label",
+            "file",
+            "original_filename",
+            "status",
+            "status_label",
+            "rejection_reason",
+            "reviewed_by_name",
+            "reviewed_at",
+            "created_at",
+        ]
+
+    def get_reviewed_by_name(self, obj):
+        return obj.reviewed_by.get_full_name() if obj.reviewed_by else None
+
+
+class AdminDocumentReviewSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(
+        choices=[("VERIFIED", "Verified"), ("REJECTED", "Rejected")]
+    )
+    rejection_reason = serializers.CharField(
+        required=False, allow_blank=True, default=""
+    )
+
+
+class AdminBankAccountSerializer(serializers.ModelSerializer):
+    status_label = serializers.CharField(source="get_status_display")
+    verified_by_name = serializers.SerializerMethodField()
+    account_number_masked = serializers.SerializerMethodField()
+
+    class Meta:
+        model = BankAccount
+        fields = [
+            "id",
+            "account_holder_name",
+            "account_number_masked",
+            "ifsc_code",
+            "bank_name",
+            "branch_name",
+            "status",
+            "status_label",
+            "is_active_acc",
+            "rejection_reason",
+            "verified_by_name",
+            "verified_at",
+            "submitted_at",
+        ]
+
+    def get_verified_by_name(self, obj):
+        return obj.verified_by.get_full_name() if obj.verified_by else None
+
+    def get_account_number_masked(self, obj):
+        # Not actually masked — staff genuinely need the real account
+        # number to process a bank transfer. Field name kept as-is for
+        # clarity that this was a deliberate call, not an oversight.
+        return obj.account_number
+
+
+class AdminBankAccountReviewSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(
+        choices=[("VERIFIED", "Verified"), ("REJECTED", "Rejected")]
+    )
+    rejection_reason = serializers.CharField(
+        required=False, allow_blank=True, default=""
+    )
+
+
+class AdminVendorCommissionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = VendorCommission
+        fields = ["id", "name", "commission_type", "flat_percentage", "description"]
+
+
+class AdminVendorSubscriptionSerializer(serializers.ModelSerializer):
+    plan_name = serializers.CharField(source="plan.name")
+    status_label = serializers.CharField(source="get_status_display")
+    assigned_by_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = VendorSubscription
+        fields = [
+            "id",
+            "plan",
+            "plan_name",
+            "status",
+            "status_label",
+            "started_at",
+            "expires_at",
+            "cancelled_at",
+            "cancellation_reason",
+            "is_current",
+            "is_manually_assigned",
+            "assigned_by_name",
+            "created_at",
+        ]
+
+    def get_assigned_by_name(self, obj):
+        return obj.assigned_by.get_full_name() if obj.assigned_by else None
+
+
+class AdminVendorSubscriptionAssignSerializer(serializers.Serializer):
+    plan_id = serializers.IntegerField()
+
+
+class AdminSubscriptionPlanSerializer(serializers.ModelSerializer):
+    commission_name = serializers.CharField(source="commission.name", read_only=True)
+
+    class Meta:
+        model = SubscriptionPlan
+        fields = [
+            "id",
+            "name",
+            "description",
+            "billing_cycle",
+            "price",
+            "commission",
+            "commission_name",
+            "max_listings",
+            "max_pickup_locations",
+            "max_images_per_listing",
+            "can_enable_partial_payment",
+            "can_access_analytics",
+            "can_respond_to_reviews",
+            "priority_listing",
+            "is_default",
+            "sort_order",
+        ]

@@ -5,6 +5,7 @@ from datetime import datetime
 
 # Django
 from django.conf import settings
+from django.db.models import Q
 from django.http import HttpResponse
 from django.utils.decorators import method_decorator
 from django.views import View
@@ -22,6 +23,8 @@ from drf_spectacular.utils import OpenApiParameter, extend_schema
 # Local Apps - Bookings
 from apps.bookings.cashfree_client import CashfreeClient
 from apps.bookings.serializers import (
+    AdminBookingDetailSerializer,
+    AdminBookingListSerializer,
     AdminCancelBookingRequestSerializer,
     BookingCancellationSerializer,
     BookingConfirmationSerializer,
@@ -47,6 +50,7 @@ from apps.bookings.models import Booking, BookingCancellation
 
 # Local Apps - Core
 from apps.core.pagination import CustomPagination
+from apps.core.permissions import IsStaffRole
 from apps.core.responses import error_response, success_response
 
 logger = logging.getLogger(__name__)
@@ -588,5 +592,70 @@ class AdminCancelBookingView(GenericAPIView):
         return success_response(
             data=cancel_serializer.data,
             message="Booking cancelled successfully",
+            status=status.HTTP_200_OK,
+        )
+
+
+class AdminBookingListView(GenericAPIView):
+    """GET /api/bookings/admin/bookings/?status=&vendor_id=&search=&page="""
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+    serializer_class = AdminBookingListSerializer
+    pagination_class = CustomPagination
+
+    def get(self, request):
+        qs = Booking.objects.select_related(
+            "listing__vendor", "listing__vehicle_type__brand", "customer"
+        ).order_by("-created_at")
+        status_filter = request.query_params.get("status")
+        vendor_id = request.query_params.get("vendor_id")
+        search = request.query_params.get("search")
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+        if vendor_id:
+            qs = qs.filter(listing__vendor_id=vendor_id)
+        if search:
+            qs = qs.filter(
+                Q(booking_reference__icontains=search)
+                | Q(listing__vendor__business_name__icontains=search)
+                | Q(customer__phone_number__icontains=search)
+            )
+        page = self.paginate_queryset(qs)
+        serializer = self.get_serializer(page, many=True)
+        paginated_response = self.get_paginated_response(serializer.data)
+        return success_response(
+            data=paginated_response.data,
+            message="Bookings retrieved successfully",
+            status=status.HTTP_200_OK,
+        )
+
+
+class AdminBookingDetailView(GenericAPIView):
+    """GET /api/bookings/admin/bookings/<int:booking_id>/"""
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+    serializer_class = AdminBookingDetailSerializer
+
+    def get(self, request, booking_id: int):
+        booking = (
+            Booking.objects.filter(id=booking_id)
+            .select_related(
+                "listing__vendor",
+                "listing__vehicle_type__brand",
+                "customer",
+                "pickup_location",
+                "cancellation",
+            )
+            .prefetch_related("payments")
+            .first()
+        )
+        if booking is None:
+            return error_response(
+                message="Booking not found", status=status.HTTP_404_NOT_FOUND
+            )
+        serializer = self.get_serializer(booking)
+        return success_response(
+            data=serializer.data,
+            message="Booking retrieved successfully",
             status=status.HTTP_200_OK,
         )

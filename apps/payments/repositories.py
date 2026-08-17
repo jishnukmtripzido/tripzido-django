@@ -1,5 +1,8 @@
-from django.db.models import Prefetch
+from django.db import transaction
+from django.db.models import Prefetch, Q
+from apps.bookings.models import Booking
 from apps.payments.models import VendorPayout, VendorPayoutItem
+from apps.vendors.models import BankAccount
 
 
 class VendorPayoutRepository:
@@ -35,3 +38,139 @@ class VendorPayoutRepository:
             )
             .first()
         )
+
+
+class AdminEligibleBookingRepository:
+
+    @staticmethod
+    def get_all(vendor_id=None, search=None):
+        qs = (
+            Booking.objects.filter(
+                payment_mode=Booking.PaymentMode.FULL,
+                status=Booking.Status.COMPLETED,
+                payout_item__isnull=True,
+            )
+            .select_related("listing__vendor", "listing__vehicle_type__brand")
+            .order_by("-dropoff_date")
+        )
+        if vendor_id:
+            qs = qs.filter(listing__vendor_id=vendor_id)
+        if search:
+            qs = qs.filter(
+                Q(booking_reference__icontains=search)
+                | Q(listing__vendor__business_name__icontains=search)
+            )
+        return qs
+
+
+class AdminVendorPayoutRepository:
+
+    @staticmethod
+    def get_all(vendor_id=None, status_filter=None):
+        qs = VendorPayout.objects.select_related("vendor").order_by("-created_at")
+        if vendor_id:
+            qs = qs.filter(vendor_id=vendor_id)
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+        return qs
+
+    @staticmethod
+    def get_by_id(payout_id: int):
+        return (
+            VendorPayout.objects.filter(id=payout_id)
+            .select_related("vendor", "paid_by")
+            .prefetch_related(
+                Prefetch(
+                    "items",
+                    queryset=VendorPayoutItem.objects.select_related(
+                        "booking__listing__vehicle_type__brand"
+                    ),
+                )
+            )
+            .first()
+        )
+
+    @staticmethod
+    @transaction.atomic
+    def create(
+        vendor_id: int,
+        booking_ids: list[int],
+        period_start=None,
+        period_end=None,
+        note="",
+    ):
+        bank_snapshot = {}
+        active_account = BankAccount.objects.filter(
+            vendor_id=vendor_id, is_active_acc=True
+        ).first()
+        if active_account:
+            bank_snapshot = {
+                "account_holder_name": active_account.account_holder_name,
+                "account_number": active_account.account_number,
+                "ifsc_code": active_account.ifsc_code,
+                "bank_name": active_account.bank_name,
+            }
+
+        payout = VendorPayout.objects.create(
+            vendor_id=vendor_id,
+            status=VendorPayout.Status.PENDING,
+            period_start=period_start,
+            period_end=period_end,
+            bank_account_snapshot=bank_snapshot,
+            note=note,
+        )
+
+        # Re-filters against the eligibility rule rather than trusting
+        # booking_ids blindly — any id that isn't actually this
+        # vendor's, or isn't FULL/COMPLETED, or is already in another
+        # payout, is silently dropped here rather than erroring. The
+        # created payout's item count reflects only what was truly
+        # eligible; a caller passing stale ids just gets fewer items
+        # than requested, not a 400.
+        eligible_bookings = Booking.objects.filter(
+            id__in=booking_ids,
+            listing__vendor_id=vendor_id,
+            payment_mode=Booking.PaymentMode.FULL,
+            status=Booking.Status.COMPLETED,
+            payout_item__isnull=True,
+        )
+        # bulk_create bypasses each instance's save(), so amount must
+        # be set explicitly here — VendorPayoutItem.save()'s own
+        # auto-fill-from-booking.net_amount fallback never runs.
+        items = [
+            VendorPayoutItem(payout=payout, booking=b, amount=b.net_amount)
+            for b in eligible_bookings
+        ]
+        VendorPayoutItem.objects.bulk_create(items)
+        payout.recompute_total()
+        return payout
+
+    @staticmethod
+    @transaction.atomic
+    def update_status(
+        payout_id: int,
+        target_status: str,
+        admin_user,
+        utr_number: str = "",
+        note: str = "",
+    ):
+        from django.utils import timezone
+
+        payout = VendorPayout.objects.select_for_update().filter(id=payout_id).first()
+        if payout is None:
+            return None, "Payout not found"
+
+        if target_status == VendorPayout.Status.PAID:
+            if not utr_number.strip():
+                return None, "UTR number is required to mark a payout as paid."
+            payout.utr_number = utr_number
+            if not payout.paid_by:
+                payout.paid_by = admin_user
+            if not payout.paid_at:
+                payout.paid_at = timezone.now()
+        if note:
+            payout.note = note
+
+        payout.status = target_status
+        payout.save()
+        return payout, None

@@ -1,5 +1,5 @@
 # apps/vendors/repositories.py
-from apps.vendors.models import VendorTerms
+from apps.vendors.models import SubscriptionPlan, Vendor, VendorCommission, VendorTerms
 from decimal import Decimal
 from datetime import datetime, timedelta
 from django.db.models import Q, Sum
@@ -7,6 +7,11 @@ from django.utils import timezone
 from apps.bookings.models import Booking
 from apps.payments.models import VendorPayout
 from apps.vehicles.models import VehicleListing, ListingBlockedPeriod
+from django.db.models import Q
+from django.db.models import ProtectedError
+from django.utils import timezone
+
+from apps.vendors.models import BankAccount, VendorSubscription
 
 
 class VendorTermsRepository:
@@ -176,4 +181,132 @@ class VendorDashboardRepository:
                 "pricing_package__package_type",
             )
             .order_by("-created_at")[:limit]
+        )
+
+
+class AdminVendorRepository:
+
+    @staticmethod
+    def get_all(status_filter: str | None = None, search: str | None = None):
+        qs = Vendor.objects.select_related("user").order_by("-created_at")
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+        if search:
+            qs = qs.filter(
+                Q(business_name__icontains=search)
+                | Q(owner_name__icontains=search)
+                | Q(email__icontains=search)
+                | Q(phone_number__icontains=search)
+            )
+        return qs
+
+    @staticmethod
+    def get_by_id(vendor_id: int):
+        return Vendor.objects.filter(id=vendor_id).select_related("user").first()
+
+
+class AdminVendorDocumentRepository:
+
+    @staticmethod
+    def get_for_vendor(vendor_id: int):
+        return VendorDocument.objects.filter(vendor_id=vendor_id).order_by(
+            "-created_at"
+        )
+
+    @staticmethod
+    def get_by_id(doc_id: int):
+        return VendorDocument.objects.filter(id=doc_id).select_related("vendor").first()
+
+
+class AdminBankAccountRepository:
+
+    @staticmethod
+    def get_for_vendor(vendor_id: int):
+        return BankAccount.objects.filter(vendor_id=vendor_id).order_by("-created_at")
+
+    @staticmethod
+    def get_by_id(account_id: int):
+        return (
+            BankAccount.objects.filter(id=account_id).select_related("vendor").first()
+        )
+
+
+class AdminVendorCommissionRepository:
+
+    @staticmethod
+    def get_all():
+        return VendorCommission.objects.all().order_by("name")
+
+    @staticmethod
+    def get_by_id(commission_id: int):
+        return VendorCommission.objects.filter(id=commission_id).first()
+
+    @staticmethod
+    def create(data: dict):
+        return VendorCommission.objects.create(**data)
+
+    @staticmethod
+    def update(instance, data: dict):
+        for k, v in data.items():
+            setattr(instance, k, v)
+        instance.save()
+        return instance
+
+    @staticmethod
+    def delete(instance):
+        instance.delete()
+
+
+class AdminSubscriptionPlanRepository:
+
+    @staticmethod
+    def get_all():
+        return SubscriptionPlan.objects.select_related("commission").order_by(
+            "sort_order", "price"
+        )
+
+    @staticmethod
+    def get_by_id(plan_id: int):
+        return (
+            SubscriptionPlan.objects.filter(id=plan_id)
+            .select_related("commission")
+            .first()
+        )
+
+    @staticmethod
+    def create(data: dict):
+        return SubscriptionPlan.objects.create(**data)
+
+    @staticmethod
+    def update(instance, data: dict):
+        for k, v in data.items():
+            setattr(instance, k, v)
+        instance.save()
+        return instance
+
+    @staticmethod
+    def delete(instance):
+        instance.delete()
+
+
+class AdminVendorSubscriptionRepository:
+
+    @staticmethod
+    def get_for_vendor(vendor_id: int):
+        return (
+            VendorSubscription.objects.filter(vendor_id=vendor_id)
+            .select_related("plan", "assigned_by")
+            .order_by("-created_at")
+        )
+
+    @staticmethod
+    def assign(vendor_id: int, plan_id: int, assigned_by):
+        return VendorSubscription.objects.create(
+            vendor_id=vendor_id,
+            plan_id=plan_id,
+            status=VendorSubscription.Status.ACTIVE,
+            started_at=timezone.now(),
+            is_current=True,
+            is_manually_assigned=True,
+            assigned_by=assigned_by,
         )

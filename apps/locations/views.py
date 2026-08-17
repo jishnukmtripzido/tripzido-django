@@ -9,12 +9,18 @@ from rest_framework.views import APIView
 from django.core.exceptions import ValidationError
 from django.db.models import ProtectedError
 from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+from apps.users.permissions import IsStaffRole
 from apps.locations.serializers import (
     CountrySerializer,
     StateSerializer,
     CitySerializer,
     PickupLocationSerializer,
     PickupLocationOptionSerializer,
+    AdminCountrySerializer,
+    AdminStateSerializer,
+    AdminCitySerializer,
+    AdminPickupLocationSerializer,
 )
 from apps.locations.services import (
     CountryService,
@@ -608,3 +614,336 @@ class PickupLocationsByCityView(GenericAPIView):
                 errors=str(e),
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
+
+
+class AdminCountryListCreateView(GenericAPIView):
+    """GET/POST /api/locations/admin/countries/"""
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+    serializer_class = AdminCountrySerializer
+
+    def get(self, request):
+        items = CountryService.get_all()
+        serializer = self.get_serializer(items, many=True)
+        return success_response(
+            data=serializer.data,
+            message="Countries retrieved successfully",
+            status=status.HTTP_200_OK,
+        )
+
+    def post(self, request):
+        serializer = AdminCountrySerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid data",
+                errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        instance = CountryService.create(serializer.validated_data)
+        return success_response(
+            data=AdminCountrySerializer(instance).data,
+            message="Country created successfully",
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class AdminCountryDetailView(GenericAPIView):
+    """PATCH/DELETE /api/locations/admin/countries/<int:country_id>/"""
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+    serializer_class = AdminCountrySerializer
+
+    def patch(self, request, country_id: int):
+        try:
+            instance = CountryService.get_by_id(country_id)
+        except ValidationError:
+            return error_response(
+                message="Country not found", status=status.HTTP_404_NOT_FOUND
+            )
+        serializer = AdminCountrySerializer(instance, data=request.data, partial=True)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid data",
+                errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        instance = CountryService.update(country_id, serializer.validated_data)
+        return success_response(
+            data=AdminCountrySerializer(instance).data,
+            message="Country updated successfully",
+            status=status.HTTP_200_OK,
+        )
+
+    def delete(self, request, country_id: int):
+        try:
+            CountryService.delete(country_id)
+        except ProtectedError:
+            return error_response(
+                message="This country has states under it and can't be deleted.",
+                status=status.HTTP_409_CONFLICT,
+            )
+        except ValidationError:
+            return error_response(
+                message="Country not found", status=status.HTTP_404_NOT_FOUND
+            )
+        return success_response(
+            data=None,
+            message="Country deleted successfully",
+            status=status.HTTP_204_NO_CONTENT,
+        )
+
+
+class AdminStateListCreateView(GenericAPIView):
+    """GET/POST /api/locations/admin/states/?country_id="""
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+    serializer_class = AdminStateSerializer
+
+    def get(self, request):
+        items = StateService.get_all()
+        country_id = request.query_params.get("country_id")
+        if country_id:
+            items = items.filter(country_id=country_id)
+        serializer = self.get_serializer(items, many=True)
+        return success_response(
+            data=serializer.data,
+            message="States retrieved successfully",
+            status=status.HTTP_200_OK,
+        )
+
+    def post(self, request):
+        serializer = AdminStateSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid data",
+                errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        instance = StateService.create(serializer.validated_data)
+        return success_response(
+            data=AdminStateSerializer(instance).data,
+            message="State created successfully",
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class AdminStateDetailView(GenericAPIView):
+    """PATCH/DELETE /api/locations/admin/states/<int:state_id>/"""
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+    serializer_class = AdminStateSerializer
+
+    def patch(self, request, state_id: int):
+        try:
+            instance = StateService.get_by_id(state_id)
+        except ValidationError:
+            return error_response(
+                message="State not found", status=status.HTTP_404_NOT_FOUND
+            )
+        serializer = AdminStateSerializer(instance, data=request.data, partial=True)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid data",
+                errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        instance = StateService.update(state_id, serializer.validated_data)
+        return success_response(
+            data=AdminStateSerializer(instance).data,
+            message="State updated successfully",
+            status=status.HTTP_200_OK,
+        )
+
+    def delete(self, request, state_id: int):
+        try:
+            StateService.delete(state_id)
+        except ProtectedError:
+            return error_response(
+                message="This state has cities under it and can't be deleted.",
+                status=status.HTTP_409_CONFLICT,
+            )
+        except ValidationError:
+            return error_response(
+                message="State not found", status=status.HTTP_404_NOT_FOUND
+            )
+        return success_response(
+            data=None,
+            message="State deleted successfully",
+            status=status.HTTP_204_NO_CONTENT,
+        )
+
+
+class AdminCityListCreateView(GenericAPIView):
+    """GET/POST /api/locations/admin/cities/?state_id=&search=&page="""
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+    serializer_class = AdminCitySerializer
+    pagination_class = CustomPagination
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def get(self, request):
+        items = CityService.get_all()
+        state_id = request.query_params.get("state_id")
+        search = request.query_params.get("search")
+        if state_id:
+            items = items.filter(state_id=state_id)
+        if search:
+            items = items.filter(name__icontains=search)
+        page = self.paginate_queryset(items)
+        serializer = self.get_serializer(page, many=True)
+        paginated_response = self.get_paginated_response(serializer.data)
+        return success_response(
+            data=paginated_response.data,
+            message="Cities retrieved successfully",
+            status=status.HTTP_200_OK,
+        )
+
+    def post(self, request):
+        serializer = AdminCitySerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid data",
+                errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        instance = CityService.create(serializer.validated_data)
+        return success_response(
+            data=AdminCitySerializer(instance).data,
+            message="City created successfully",
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class AdminCityDetailView(GenericAPIView):
+    """PATCH/DELETE /api/locations/admin/cities/<int:city_id>/"""
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+    serializer_class = AdminCitySerializer
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def patch(self, request, city_id: int):
+        try:
+            instance = CityService.get_by_id(city_id)
+        except ValidationError:
+            return error_response(
+                message="City not found", status=status.HTTP_404_NOT_FOUND
+            )
+        serializer = AdminCitySerializer(instance, data=request.data, partial=True)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid data",
+                errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        instance = CityService.update(city_id, serializer.validated_data)
+        return success_response(
+            data=AdminCitySerializer(instance).data,
+            message="City updated successfully",
+            status=status.HTTP_200_OK,
+        )
+
+    def delete(self, request, city_id: int):
+        try:
+            CityService.delete(city_id)
+        except ProtectedError:
+            return error_response(
+                message="This city has pickup locations under it and can't be deleted.",
+                status=status.HTTP_409_CONFLICT,
+            )
+        except ValidationError:
+            return error_response(
+                message="City not found", status=status.HTTP_404_NOT_FOUND
+            )
+        return success_response(
+            data=None,
+            message="City deleted successfully",
+            status=status.HTTP_204_NO_CONTENT,
+        )
+
+
+class AdminPickupLocationListCreateView(GenericAPIView):
+    """GET/POST /api/locations/admin/pickup-locations/?city_id=&search=&page="""
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+    serializer_class = AdminPickupLocationSerializer
+    pagination_class = CustomPagination
+
+    def get(self, request):
+        items = PickupLocationService.get_all()
+        city_id = request.query_params.get("city_id")
+        search = request.query_params.get("search")
+        if city_id:
+            items = items.filter(city_id=city_id)
+        if search:
+            items = items.filter(name__icontains=search)
+        page = self.paginate_queryset(items)
+        serializer = self.get_serializer(page, many=True)
+        paginated_response = self.get_paginated_response(serializer.data)
+        return success_response(
+            data=paginated_response.data,
+            message="Pickup locations retrieved successfully",
+            status=status.HTTP_200_OK,
+        )
+
+    def post(self, request):
+        serializer = AdminPickupLocationSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid data",
+                errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        instance = PickupLocationService.create(serializer.validated_data)
+        return success_response(
+            data=AdminPickupLocationSerializer(instance).data,
+            message="Pickup location created successfully",
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class AdminPickupLocationDetailView(GenericAPIView):
+    """PATCH/DELETE /api/locations/admin/pickup-locations/<int:location_id>/"""
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+    serializer_class = AdminPickupLocationSerializer
+
+    def patch(self, request, location_id: int):
+        try:
+            instance = PickupLocationService.get_by_id(location_id)
+        except ValidationError:
+            return error_response(
+                message="Pickup location not found", status=status.HTTP_404_NOT_FOUND
+            )
+        serializer = AdminPickupLocationSerializer(
+            instance, data=request.data, partial=True
+        )
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid data",
+                errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        instance = PickupLocationService.update(location_id, serializer.validated_data)
+        return success_response(
+            data=AdminPickupLocationSerializer(instance).data,
+            message="Pickup location updated successfully",
+            status=status.HTTP_200_OK,
+        )
+
+    def delete(self, request, location_id: int):
+        try:
+            PickupLocationService.delete(location_id)
+        except ProtectedError:
+            return error_response(
+                message="This pickup location has vehicle listings under it and can't be deleted.",
+                status=status.HTTP_409_CONFLICT,
+            )
+        except ValidationError:
+            return error_response(
+                message="Pickup location not found", status=status.HTTP_404_NOT_FOUND
+            )
+        return success_response(
+            data=None,
+            message="Pickup location deleted successfully",
+            status=status.HTTP_204_NO_CONTENT,
+        )

@@ -1,10 +1,16 @@
 # apps/vehicles/views.py
 
+from django.db.models import ProtectedError
 from rest_framework.generics import GenericAPIView
 from rest_framework import status
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError
 from apps.vehicles.serializers import (
+    AdminBrandSerializer,
+    AdminListingListSerializer,
+    AdminListingDetailSerializer,
+    AdminListingStatusUpdateSerializer,
+    AdminPricingPackageTypeSerializer,
     BrandOptionSerializer,
     VehicleSearchQuerySerializer,
     VehicleSearchResultSerializer,
@@ -27,7 +33,11 @@ from apps.vehicles.serializers import (
     VendorListingStatusSerializer,
     VendorPickupPointSerializer,
     VendorListingUpdateSerializer,
+    AdminVehicleTypeSerializer,
+    AdminPackageCategorySerializer,
 )
+from apps.vehicles.models import Brand, PricingPackageType, VehicleType, PackageCategory
+from django.db.models import Q
 from apps.vehicles.services import (
     BrandService,
     VehicleSearchService,
@@ -45,14 +55,16 @@ from apps.vehicles.services import (
     VendorListingUpdateService,
     VendorBlockedPeriodService,
     VendorPickupPointService,
+    AdminListingService,
 )
 from apps.core.responses import success_response, error_response
 from drf_spectacular.utils import extend_schema, OpenApiParameter
 from drf_spectacular.types import OpenApiTypes
 from rest_framework.permissions import AllowAny, IsAuthenticated
+from apps.users.permissions import IsStaffRole
 from apps.core.pagination import CustomPagination
 from django.db import IntegrityError
-from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.views import APIView
 
 
@@ -1181,4 +1193,432 @@ class VendorListingActiveToggleView(GenericAPIView):
             data=serializer.data,
             message="Listing status updated successfully",
             status=status.HTTP_200_OK,
+        )
+
+
+class AdminListingListView(GenericAPIView):
+    """GET /api/vehicles/admin/listings/?status=&vendor_id=&search=&page="""
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+    serializer_class = AdminListingListSerializer
+    pagination_class = CustomPagination
+
+    def get(self, request):
+        status_filter = request.query_params.get("status")
+        vendor_id = request.query_params.get("vendor_id")
+        search = request.query_params.get("search")
+        queryset = AdminListingService.get_all(
+            status_filter, int(vendor_id) if vendor_id else None, search
+        )
+        page = self.paginate_queryset(queryset)
+        serializer = self.get_serializer(page, many=True, context={"request": request})
+        paginated_response = self.get_paginated_response(serializer.data)
+        return success_response(
+            data=paginated_response.data,
+            message="Listings retrieved successfully",
+            status=status.HTTP_200_OK,
+        )
+
+
+class AdminListingDetailView(GenericAPIView):
+    """GET /api/vehicles/admin/listings/<int:listing_id>/"""
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+    serializer_class = AdminListingDetailSerializer
+
+    def get(self, request, listing_id: int):
+        data = AdminListingService.get_detail_data(listing_id, request=request)
+        if data is None:
+            return error_response(
+                message="Listing not found", status=status.HTTP_404_NOT_FOUND
+            )
+        serializer = AdminListingDetailSerializer(data)
+        return success_response(
+            data=serializer.data,
+            message="Listing retrieved successfully",
+            status=status.HTTP_200_OK,
+        )
+
+
+class AdminListingStatusUpdateView(GenericAPIView):
+    """PATCH /api/vehicles/admin/listings/<int:listing_id>/status/"""
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+    serializer_class = AdminListingStatusUpdateSerializer
+
+    def patch(self, request, listing_id: int):
+        serializer = AdminListingStatusUpdateSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid data",
+                errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        listing, error = AdminListingService.update_status(
+            listing_id,
+            serializer.validated_data["status"],
+            request.user,
+            serializer.validated_data["reason"],
+        )
+        if listing is None:
+            code = (
+                status.HTTP_404_NOT_FOUND
+                if error == "Listing not found"
+                else status.HTTP_400_BAD_REQUEST
+            )
+            return error_response(message=error, status=code)
+        data = AdminListingService.get_detail_data(listing_id, request=request)
+        output = AdminListingDetailSerializer(data)
+        return success_response(
+            data=output.data,
+            message="Listing status updated successfully",
+            status=status.HTTP_200_OK,
+        )
+
+
+class AdminBrandListCreateView(GenericAPIView):
+    """GET/POST /api/vehicles/admin/brands/"""
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+    serializer_class = AdminBrandSerializer
+
+    def get(self, request):
+        brands = Brand.objects.all().order_by("name")
+        serializer = self.get_serializer(brands, many=True)
+        return success_response(
+            data=serializer.data,
+            message="Brands retrieved successfully",
+            status=status.HTTP_200_OK,
+        )
+
+    def post(self, request):
+        serializer = AdminBrandSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid data",
+                errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        instance = serializer.save()
+        return success_response(
+            data=AdminBrandSerializer(instance).data,
+            message="Brand created successfully",
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class AdminBrandDetailView(GenericAPIView):
+    """PATCH/DELETE /api/vehicles/admin/brands/<int:brand_id>/"""
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+    serializer_class = AdminBrandSerializer
+
+    def patch(self, request, brand_id: int):
+        brand = Brand.objects.filter(id=brand_id).first()
+        if brand is None:
+            return error_response(
+                message="Brand not found", status=status.HTTP_404_NOT_FOUND
+            )
+        serializer = AdminBrandSerializer(brand, data=request.data, partial=True)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid data",
+                errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        instance = serializer.save()
+        return success_response(
+            data=AdminBrandSerializer(instance).data,
+            message="Brand updated successfully",
+            status=status.HTTP_200_OK,
+        )
+
+    def delete(self, request, brand_id: int):
+        brand = Brand.objects.filter(id=brand_id).first()
+        if brand is None:
+            return error_response(
+                message="Brand not found", status=status.HTTP_404_NOT_FOUND
+            )
+        try:
+            brand.delete()
+        except ProtectedError:
+            return error_response(
+                message="This brand has vehicle types under it and can't be deleted.",
+                status=status.HTTP_409_CONFLICT,
+            )
+        return success_response(
+            data=None,
+            message="Brand deleted successfully",
+            status=status.HTTP_204_NO_CONTENT,
+        )
+
+
+class AdminVehicleTypeListCreateView(GenericAPIView):
+    """GET/POST /api/vehicles/admin/vehicle-types/?search=&brand_id=&page="""
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+    serializer_class = AdminVehicleTypeSerializer
+    pagination_class = CustomPagination
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def get(self, request):
+        search = request.query_params.get("search")
+        brand_id = request.query_params.get("brand_id")
+        qs = VehicleType.objects.select_related("brand").order_by("brand__name", "name")
+        if brand_id:
+            qs = qs.filter(brand_id=brand_id)
+        if search:
+            qs = qs.filter(Q(name__icontains=search) | Q(brand__name__icontains=search))
+        page = self.paginate_queryset(qs)
+        serializer = self.get_serializer(page, many=True, context={"request": request})
+        paginated_response = self.get_paginated_response(serializer.data)
+        return success_response(
+            data=paginated_response.data,
+            message="Vehicle types retrieved successfully",
+            status=status.HTTP_200_OK,
+        )
+
+    def post(self, request):
+        serializer = AdminVehicleTypeSerializer(
+            data=request.data, context={"request": request}
+        )
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid data",
+                errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        instance = serializer.save()
+        output = AdminVehicleTypeSerializer(instance, context={"request": request})
+        return success_response(
+            data=output.data,
+            message="Vehicle type created successfully",
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class AdminVehicleTypeDetailView(GenericAPIView):
+    """GET/PATCH/DELETE /api/vehicles/admin/vehicle-types/<int:vehicle_type_id>/"""
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+    serializer_class = AdminVehicleTypeSerializer
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def get(self, request, vehicle_type_id: int):
+        instance = (
+            VehicleType.objects.filter(id=vehicle_type_id)
+            .select_related("brand")
+            .first()
+        )
+        if instance is None:
+            return error_response(
+                message="Vehicle type not found", status=status.HTTP_404_NOT_FOUND
+            )
+        serializer = self.get_serializer(instance, context={"request": request})
+        return success_response(
+            data=serializer.data,
+            message="Vehicle type retrieved successfully",
+            status=status.HTTP_200_OK,
+        )
+
+    def patch(self, request, vehicle_type_id: int):
+        instance = VehicleType.objects.filter(id=vehicle_type_id).first()
+        if instance is None:
+            return error_response(
+                message="Vehicle type not found", status=status.HTTP_404_NOT_FOUND
+            )
+        serializer = AdminVehicleTypeSerializer(
+            instance, data=request.data, partial=True, context={"request": request}
+        )
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid data",
+                errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        instance = serializer.save()
+        output = AdminVehicleTypeSerializer(instance, context={"request": request})
+        return success_response(
+            data=output.data,
+            message="Vehicle type updated successfully",
+            status=status.HTTP_200_OK,
+        )
+
+    def delete(self, request, vehicle_type_id: int):
+        instance = VehicleType.objects.filter(id=vehicle_type_id).first()
+        if instance is None:
+            return error_response(
+                message="Vehicle type not found", status=status.HTTP_404_NOT_FOUND
+            )
+        try:
+            instance.delete()
+        except ProtectedError:
+            return error_response(
+                message="This vehicle type has listings under it and can't be deleted.",
+                status=status.HTTP_409_CONFLICT,
+            )
+        return success_response(
+            data=None,
+            message="Vehicle type deleted successfully",
+            status=status.HTTP_204_NO_CONTENT,
+        )
+
+
+class AdminPackageCategoryListCreateView(GenericAPIView):
+    """GET/POST /api/vehicles/admin/package-categories/"""
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+    serializer_class = AdminPackageCategorySerializer
+
+    def get(self, request):
+        items = PackageCategory.objects.all().order_by("sort_order", "name")
+        serializer = self.get_serializer(items, many=True)
+        return success_response(
+            data=serializer.data,
+            message="Package categories retrieved successfully",
+            status=status.HTTP_200_OK,
+        )
+
+    def post(self, request):
+        serializer = AdminPackageCategorySerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid data",
+                errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        instance = serializer.save()
+        return success_response(
+            data=AdminPackageCategorySerializer(instance).data,
+            message="Package category created successfully",
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class AdminPackageCategoryDetailView(GenericAPIView):
+    """PATCH/DELETE /api/vehicles/admin/package-categories/<int:category_id>/"""
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+    serializer_class = AdminPackageCategorySerializer
+
+    def patch(self, request, category_id: int):
+        instance = PackageCategory.objects.filter(id=category_id).first()
+        if instance is None:
+            return error_response(
+                message="Package category not found", status=status.HTTP_404_NOT_FOUND
+            )
+        serializer = AdminPackageCategorySerializer(
+            instance, data=request.data, partial=True
+        )
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid data",
+                errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        instance = serializer.save()
+        return success_response(
+            data=AdminPackageCategorySerializer(instance).data,
+            message="Package category updated successfully",
+            status=status.HTTP_200_OK,
+        )
+
+    def delete(self, request, category_id: int):
+        instance = PackageCategory.objects.filter(id=category_id).first()
+        if instance is None:
+            return error_response(
+                message="Package category not found", status=status.HTTP_404_NOT_FOUND
+            )
+        try:
+            instance.delete()
+        except ProtectedError:
+            return error_response(
+                message="This category has package types under it and can't be deleted.",
+                status=status.HTTP_409_CONFLICT,
+            )
+        return success_response(
+            data=None,
+            message="Package category deleted successfully",
+            status=status.HTTP_204_NO_CONTENT,
+        )
+
+
+class AdminPricingPackageTypeListCreateView(GenericAPIView):
+    """GET/POST /api/vehicles/admin/package-types/"""
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+    serializer_class = AdminPricingPackageTypeSerializer
+
+    def get(self, request):
+        items = PricingPackageType.objects.select_related("category").order_by(
+            "sort_order", "name"
+        )
+        serializer = self.get_serializer(items, many=True)
+        return success_response(
+            data=serializer.data,
+            message="Package types retrieved successfully",
+            status=status.HTTP_200_OK,
+        )
+
+    def post(self, request):
+        serializer = AdminPricingPackageTypeSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid data",
+                errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        instance = serializer.save()
+        return success_response(
+            data=AdminPricingPackageTypeSerializer(instance).data,
+            message="Package type created successfully",
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class AdminPricingPackageTypeDetailView(GenericAPIView):
+    """PATCH/DELETE /api/vehicles/admin/package-types/<int:package_type_id>/"""
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+    serializer_class = AdminPricingPackageTypeSerializer
+
+    def patch(self, request, package_type_id: int):
+        instance = PricingPackageType.objects.filter(id=package_type_id).first()
+        if instance is None:
+            return error_response(
+                message="Package type not found", status=status.HTTP_404_NOT_FOUND
+            )
+        serializer = AdminPricingPackageTypeSerializer(
+            instance, data=request.data, partial=True
+        )
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid data",
+                errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        instance = serializer.save()
+        return success_response(
+            data=AdminPricingPackageTypeSerializer(instance).data,
+            message="Package type updated successfully",
+            status=status.HTTP_200_OK,
+        )
+
+    def delete(self, request, package_type_id: int):
+        instance = PricingPackageType.objects.filter(id=package_type_id).first()
+        if instance is None:
+            return error_response(
+                message="Package type not found", status=status.HTTP_404_NOT_FOUND
+            )
+        try:
+            instance.delete()
+        except ProtectedError:
+            return error_response(
+                message="This package type is used by one or more listings and can't be deleted.",
+                status=status.HTTP_409_CONFLICT,
+            )
+        return success_response(
+            data=None,
+            message="Package type deleted successfully",
+            status=status.HTTP_204_NO_CONTENT,
         )

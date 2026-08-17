@@ -11,6 +11,14 @@ from apps.locations.views import (
     PickupLocationListCreateView,
     PickupLocationDetailView,
     PickupLocationsByCityView,
+    AdminCountryListCreateView,
+    AdminCountryDetailView,
+    AdminStateListCreateView,
+    AdminStateDetailView,
+    AdminCityListCreateView,
+    AdminCityDetailView,
+    AdminPickupLocationListCreateView,
+    AdminPickupLocationDetailView,
 )
 
 urlpatterns = [
@@ -32,5 +40,37 @@ urlpatterns = [
         "pickup-locations/<int:pk>/",
         PickupLocationDetailView.as_view(),
         name="pickup-detail",
+    ),
+    path(
+        "admin/countries/",
+        AdminCountryListCreateView.as_view(),
+        name="admin-country-list",
+    ),
+    path(
+        "admin/countries/<int:country_id>/",
+        AdminCountryDetailView.as_view(),
+        name="admin-country-detail",
+    ),
+    path("admin/states/", AdminStateListCreateView.as_view(), name="admin-state-list"),
+    path(
+        "admin/states/<int:state_id>/",
+        AdminStateDetailView.as_view(),
+        name="admin-state-detail",
+    ),
+    path("admin/cities/", AdminCityListCreateView.as_view(), name="admin-city-list"),
+    path(
+        "admin/cities/<int:city_id>/",
+        AdminCityDetailView.as_view(),
+        name="admin-city-detail",
+    ),
+    path(
+        "admin/pickup-locations/",
+        AdminPickupLocationListCreateView.as_view(),
+        name="admin-pickup-location-list",
+    ),
+    path(
+        "admin/pickup-locations/<int:location_id>/",
+        AdminPickupLocationDetailView.as_view(),
+        name="admin-pickup-location-detail",
     ),
 ]

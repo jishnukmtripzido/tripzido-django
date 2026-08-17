@@ -7,6 +7,7 @@ from decimal import Decimal
 
 from apps.vehicles.models import (
     Brand,
+    PackageCategory,
     VehicleListing,
     VehicleType,
     VehicleImage,
@@ -828,3 +829,139 @@ class VendorListingStatusSerializer(serializers.Serializer):
 
     def get_status_label(self, obj):
         return obj.get_status_display()
+
+
+class AdminListingListSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    vendor_name = serializers.CharField(source="vendor.business_name")
+    vehicle_type_name = serializers.SerializerMethodField()
+    vehicle_type_image = serializers.SerializerMethodField()
+    location_name = serializers.CharField(source="pickup_location.name")
+    quantity = serializers.IntegerField(source="available_count")
+    status = serializers.CharField()
+    status_label = serializers.CharField(source="get_status_display")
+    created_at = serializers.DateTimeField()
+
+    def get_vehicle_type_name(self, obj):
+        return f"{obj.vehicle_type.brand.name} {obj.vehicle_type.name}"
+
+    def get_vehicle_type_image(self, obj):
+        request = self.context.get("request")
+        if not obj.vehicle_type.primary_image:
+            return None
+        url = obj.vehicle_type.primary_image.url
+        return request.build_absolute_uri(url) if request else url
+
+
+class AdminListingImageSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    image_url = serializers.CharField(allow_null=True)
+    is_primary = serializers.BooleanField()
+    sort_order = serializers.IntegerField()
+
+
+class AdminListingPackageSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    name = serializers.CharField()
+    category = serializers.CharField()
+    duration_hours = serializers.DecimalField(max_digits=5, decimal_places=2)
+    price = serializers.DecimalField(max_digits=10, decimal_places=2)
+    pay_at_pickup_enabled = serializers.BooleanField()
+    km_limit = serializers.IntegerField(allow_null=True)
+
+
+class AdminListingScheduleDaySerializer(serializers.Serializer):
+    day_of_week = serializers.IntegerField()
+    is_closed = serializers.BooleanField()
+    timing = serializers.CharField()
+
+
+class AdminListingDetailSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    status = serializers.CharField()
+    rejection_reason = serializers.CharField(allow_blank=True)
+    suspension_reason = serializers.CharField(allow_blank=True)
+    available_count = serializers.IntegerField()
+    vendor_id = serializers.IntegerField()
+    vendor_name = serializers.CharField()
+    vehicle_type_id = serializers.IntegerField()
+    vehicle_type_name = serializers.CharField()
+    vehicle_type_image = serializers.CharField(allow_null=True)
+    pickup_location_name = serializers.CharField()
+    pickup_point_address = serializers.CharField(allow_null=True)
+    schedule_template_name = serializers.CharField(allow_null=True)
+    schedule_days = AdminListingScheduleDaySerializer(many=True)
+    images = AdminListingImageSerializer(many=True)
+    pricing_packages = AdminListingPackageSerializer(many=True)
+    security_deposit_amount = serializers.DecimalField(max_digits=10, decimal_places=2)
+    km_limit_per_day = serializers.IntegerField(allow_null=True)
+    excess_charge_per_km = serializers.DecimalField(
+        max_digits=8, decimal_places=2, allow_null=True
+    )
+    late_return_penalty_per_hour = serializers.DecimalField(
+        max_digits=8, decimal_places=2, allow_null=True
+    )
+    doorstep_delivery_enabled = serializers.BooleanField()
+    approved_by_name = serializers.CharField(allow_null=True)
+    approved_at = serializers.DateTimeField(allow_null=True)
+    suspended_by_name = serializers.CharField(allow_null=True)
+    suspended_at = serializers.DateTimeField(allow_null=True)
+    created_at = serializers.DateTimeField()
+
+
+class AdminListingStatusUpdateSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=VehicleListing.Status.choices)
+    reason = serializers.CharField(required=False, allow_blank=True, default="")
+
+
+class AdminBrandSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Brand
+        fields = ["id", "name"]
+
+
+class AdminVehicleTypeSerializer(serializers.ModelSerializer):
+    brand_name = serializers.CharField(source="brand.name", read_only=True)
+
+    class Meta:
+        model = VehicleType
+        fields = [
+            "id",
+            "name",
+            "brand",
+            "brand_name",
+            "make_year",
+            "transmission_type",
+            "vehicle_type",
+            "fuel_type",
+            "primary_image",
+            "seats",
+            "cc",
+            "top_speed_kmph",
+            "fuel_capacity_litres",
+            "weight_kg",
+            "mileage_kmpl",
+            "is_published",
+        ]
+
+
+class AdminPackageCategorySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PackageCategory
+        fields = ["id", "name", "description", "sort_order"]
+
+
+class AdminPricingPackageTypeSerializer(serializers.ModelSerializer):
+    category_name = serializers.CharField(source="category.name", read_only=True)
+
+    class Meta:
+        model = PricingPackageType
+        fields = [
+            "id",
+            "category",
+            "category_name",
+            "name",
+            "description",
+            "duration_hours",
+            "sort_order",
+        ]

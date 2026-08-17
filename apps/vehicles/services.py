@@ -3,6 +3,7 @@
 from datetime import datetime, timedelta
 from decimal import Decimal, ROUND_CEILING
 from apps.vehicles.repositories import (
+    AdminListingRepository,
     BrandRepository,
     VehicleSearchRepository,
     AvailabilityRepository,
@@ -20,6 +21,7 @@ from django.core.exceptions import ValidationError
 from apps.locations.services import PickupLocationService
 from django.utils import timezone
 from apps.vehicles.utils import format_duration
+from apps.vehicles.models import VehicleListing
 
 
 class AvailabilityService:
@@ -1359,3 +1361,173 @@ class VendorPickupPointService:
     @staticmethod
     def delete_for_vendor(point_id: int, vendor_id: int) -> bool:
         return VendorPickupPointRepository.delete_for_vendor(point_id, vendor_id)
+
+
+class AdminListingService:
+
+    # Same "REJECTED is terminal here" logic as vendor booking status —
+    # but note a REJECTED listing isn't a true dead end: when the
+    # vendor edits and re-saves it, VendorFleetRepository.update_listing
+    # already resets status to PENDING_APPROVAL automatically (built
+    # earlier in the vendor portal work), so re-review happens through
+    # that path, not a transition from this endpoint.
+    ALLOWED_TRANSITIONS = {
+        VehicleListing.Status.PENDING_APPROVAL: [
+            VehicleListing.Status.APPROVED,
+            VehicleListing.Status.REJECTED,
+        ],
+        VehicleListing.Status.APPROVED: [VehicleListing.Status.SUSPENDED],
+        VehicleListing.Status.PAUSED: [VehicleListing.Status.SUSPENDED],
+        VehicleListing.Status.SUSPENDED: [VehicleListing.Status.APPROVED],
+    }
+    REASON_REQUIRED_FOR = {
+        VehicleListing.Status.REJECTED,
+        VehicleListing.Status.SUSPENDED,
+    }
+
+    @staticmethod
+    def get_all(status_filter=None, vendor_id=None, search=None):
+        return AdminListingRepository.get_all(status_filter, vendor_id, search)
+
+    @staticmethod
+    @transaction.atomic
+    def update_status(
+        listing_id: int, target_status: str, admin_user, reason: str = ""
+    ):
+        listing = (
+            VehicleListing.objects.select_for_update().filter(id=listing_id).first()
+        )
+        if listing is None:
+            return None, "Listing not found"
+
+        allowed = AdminListingService.ALLOWED_TRANSITIONS.get(listing.status, [])
+        if target_status not in allowed:
+            return (
+                None,
+                f"Cannot change status from '{listing.get_status_display()}' to '{target_status}'.",
+            )
+        if (
+            target_status in AdminListingService.REASON_REQUIRED_FOR
+            and not reason.strip()
+        ):
+            return None, "A reason is required for this action."
+
+        now = timezone.now()
+        was_suspended = listing.status == VehicleListing.Status.SUSPENDED
+
+        if target_status == VehicleListing.Status.APPROVED and not was_suspended:
+            listing.approved_by = admin_user
+            listing.approved_at = now
+            listing.rejection_reason = ""
+        elif target_status == VehicleListing.Status.APPROVED and was_suspended:
+            pass  # reactivation — suspension fields kept as historical record
+        elif target_status == VehicleListing.Status.REJECTED:
+            listing.rejection_reason = reason
+        elif target_status == VehicleListing.Status.SUSPENDED:
+            listing.suspended_by = admin_user
+            listing.suspended_at = now
+            listing.suspension_reason = reason
+
+        listing.status = target_status
+        listing.save()
+        return listing, None
+
+    @staticmethod
+    def get_detail_data(listing_id: int, request=None) -> dict | None:
+        listing = AdminListingRepository.get_by_id(listing_id)
+        if listing is None:
+            return None
+
+        vt = listing.vehicle_type
+        location = listing.pickup_location
+
+        def _abs(image_field):
+            if not image_field:
+                return None
+            url = image_field.url
+            return request.build_absolute_uri(url) if request else url
+
+        images = [
+            {
+                "id": img.pk,
+                "image_url": _abs(img.image),
+                "is_primary": img.is_primary,
+                "sort_order": img.sort_order,
+            }
+            for img in listing.images.all()
+        ]
+
+        packages = [
+            {
+                "id": pkg.pk,
+                "name": pkg.package_type.name,
+                "category": pkg.package_type.category.name,
+                "duration_hours": pkg.duration_hours,
+                "price": pkg.price,
+                "pay_at_pickup_enabled": pkg.pay_at_pickup_enabled,
+                "km_limit": pkg.km_limit,
+            }
+            for pkg in listing.pricing_packages.all()
+        ]
+
+        schedule_days = []
+        if listing.schedule_template:
+            days_by_number = {
+                d.day_of_week: d
+                for d in getattr(listing.schedule_template, "ordered_days", [])
+            }
+            for day_of_week in range(7):
+                day = days_by_number.get(day_of_week)
+                if day is None or day.is_closed:
+                    schedule_days.append(
+                        {
+                            "day_of_week": day_of_week,
+                            "is_closed": True,
+                            "timing": "Closed",
+                        }
+                    )
+                else:
+                    schedule_days.append(
+                        {
+                            "day_of_week": day_of_week,
+                            "is_closed": False,
+                            "timing": f"{day.open_time.strftime('%H:%M')} - {day.close_time.strftime('%H:%M')}",
+                        }
+                    )
+
+        return {
+            "id": listing.pk,
+            "status": listing.status,
+            "rejection_reason": listing.rejection_reason,
+            "suspension_reason": listing.suspension_reason,
+            "available_count": listing.available_count,
+            "vendor_id": listing.vendor_id,
+            "vendor_name": listing.vendor.business_name,
+            "vehicle_type_id": vt.id,
+            "vehicle_type_name": f"{vt.brand.name} {vt.name} ({vt.make_year})",
+            "vehicle_type_image": _abs(vt.primary_image),
+            "pickup_location_name": location.name,
+            "pickup_point_address": (
+                listing.pickup_point.address if listing.pickup_point else None
+            ),
+            "schedule_template_name": (
+                listing.schedule_template.name if listing.schedule_template else None
+            ),
+            "schedule_days": schedule_days,
+            "images": images,
+            "pricing_packages": packages,
+            "security_deposit_amount": listing.security_deposit_amount,
+            "km_limit_per_day": listing.km_limit_per_day,
+            "excess_charge_per_km": listing.excess_charge_per_km,
+            "late_return_penalty_per_hour": listing.late_return_penalty_per_hour,
+            "doorstep_delivery_enabled": listing.doorstep_delivery_enabled,
+            "approved_by_name": (
+                listing.approved_by.get_full_name() if listing.approved_by else None
+            ),
+            "approved_at": listing.approved_at,
+            "suspended_by_name": (
+                listing.suspended_by.get_full_name() if listing.suspended_by else None
+            ),
+            "suspended_at": listing.suspended_at,
+            "created_at": listing.created_at,
+        }

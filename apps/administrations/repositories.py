@@ -1,5 +1,6 @@
 from apps.administrations.models import (
     CancellationPolicy,
+    CancellationTier,
     Offer,
     PopularRental,
     AnnouncementBanner,
