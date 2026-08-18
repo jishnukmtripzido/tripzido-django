@@ -23,6 +23,7 @@ class BookingRepository:
             .select_related(
                 "listing__vehicle_type",
                 "listing__vendor",
+                "listing__pickup_point",
                 "pickup_location",
                 "pricing_package__package_type",
                 "handed_over_by",

@@ -3,6 +3,7 @@
 from rest_framework import serializers
 from apps.bookings.models import Booking, BookingCancellation
 from apps.payments.models import Payment
+from apps.vendors.models import VendorTerms
 
 # ── List view (BookingsList.tsx card) ──────────────────────────────────
 
@@ -215,6 +216,9 @@ class BookingDetailSerializer(serializers.ModelSerializer):
 
     status_label = serializers.CharField(source="get_status_display")
     payment_mode_label = serializers.CharField(source="get_payment_mode_display")
+    vendor_terms = serializers.SerializerMethodField()
+    things_to_remember = serializers.SerializerMethodField()
+    pickup_point = serializers.SerializerMethodField()
 
     # Was: payments = BookingPaymentSerializer(many=True, read_only=True)
     # That used the reverse `booking.payments` accessor, which only
@@ -262,6 +266,9 @@ class BookingDetailSerializer(serializers.ModelSerializer):
             "can_cancel",
             "cancellation",
             "created_at",
+            "vendor_terms",
+            "things_to_remember",
+            "pickup_point",
         ]
 
     def get_vehicle_image(self, booking):
@@ -315,6 +322,63 @@ class BookingDetailSerializer(serializers.ModelSerializer):
         if cancellation is None:
             return None
         return BookingCancellationSerializer(cancellation).data
+
+    def get_vendor_terms(self, booking):
+        # Things to Remember + vendor T&C are only meaningful once the
+        # booking is actually secured — shown from CONFIRMED onward,
+        # same "reveal after commitment" reasoning already used above
+        # for pickup_location_address, not while still PENDING_PAYMENT.
+        if booking.status not in (
+            Booking.Status.CONFIRMED,
+            Booking.Status.ONGOING,
+            Booking.Status.COMPLETED,
+        ):
+            return None
+        terms = VendorTerms.objects.filter(
+            vendor=booking.listing.vendor, is_current=True
+        ).first()
+        if terms is None:
+            return None
+        return VendorTermsSerializer(terms).data
+
+    def get_things_to_remember(self, booking):
+        # Same gating as vendor_terms/pickup_location_address above —
+        # only meaningful once the booking is actually secured.
+        if booking.status not in (
+            Booking.Status.CONFIRMED,
+            Booking.Status.ONGOING,
+            Booking.Status.COMPLETED,
+        ):
+            return None
+
+        from apps.vehicles.services import VehicleDetailService
+
+        listing = booking.listing
+        terms = VendorTerms.objects.filter(
+            vendor=listing.vendor, is_current=True
+        ).first()
+        operating_hours = VehicleDetailService._build_operating_hours(listing)
+        policies = VehicleDetailService._build_policies(listing, terms, operating_hours)
+
+        # security_deposit uses the BOOKING's own snapshot amount, not
+        # the listing's current live value — a confirmed booking
+        # should reflect what applied when it was made, even if the
+        # vendor has since changed the listing's deposit amount.
+        policies["security_deposit"] = float(booking.security_deposit_amount)
+
+        return BookingPoliciesSerializer(policies).data
+
+    def get_pickup_point(self, booking):
+        # Not status-gated, unlike vendor_terms/things_to_remember —
+        # pickup_location_address above is already shown unconditionally
+        # once a booking row exists at all, and this is the same
+        # category of "where do I go" information at a more precise
+        # level, so it follows that same existing precedent rather
+        # than introducing a third different gating rule.
+        point = booking.listing.pickup_point
+        if point is None:
+            return None
+        return BookingPickupPointSerializer(point).data
 
 
 # ── Confirmation view (post-checkout) ───────────────────────────────────
@@ -776,3 +840,47 @@ class AdminBookingDetailSerializer(serializers.ModelSerializer):
         if cancellation is None:
             return None
         return AdminBookingCancellationSerializer(cancellation).data
+
+
+class VendorTermsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = VendorTerms
+        fields = [
+            "terms_items",
+            "security_deposit_note",
+            "operating_hours_note",
+            "distance_limit_note",
+            "excess_charge_note",
+            "late_penalty_note",
+        ]
+
+
+class BookingPoliciesSerializer(serializers.Serializer):
+    """
+    Same "Things to Remember" shape as VehiclePoliciesSerializer on the
+    vehicle-detail page (apps.vehicles) — field names match 1:1 so the
+    frontend can reuse identical rendering logic. Built via that page's
+    own VehicleDetailService methods rather than re-implemented here,
+    so the two views can't drift out of sync from hand-copied logic.
+    """
+
+    security_deposit = serializers.FloatField()
+    distance_limit = serializers.CharField()
+    late_penalty_per_hour = serializers.FloatField()
+    location_timings = serializers.CharField()
+    excess_charge = serializers.CharField()
+
+
+class BookingPickupPointSerializer(serializers.Serializer):
+    label = serializers.CharField(allow_blank=True)
+    address = serializers.CharField()
+    contact_numbers = serializers.ListField(child=serializers.CharField())
+    # Explicit FloatField, not letting ModelSerializer auto-generate a
+    # DecimalField for these — DRF's auto DecimalField serializes to a
+    # STRING by default (to preserve precision), which caused a real
+    # ".toFixed is not a function" crash earlier in this same project
+    # when the frontend expected a number. FloatField sidesteps that
+    # entirely by outputting a genuine JSON number.
+    latitude = serializers.FloatField(allow_null=True)
+    longitude = serializers.FloatField(allow_null=True)
+    google_maps_link = serializers.CharField(allow_blank=True)

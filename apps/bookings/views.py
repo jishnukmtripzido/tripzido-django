@@ -41,6 +41,7 @@ from apps.bookings.services import (
     BookingCheckoutService,
     BookingQueryService,
     CancellationService,
+    InvoiceService,
     VendorBookingService,
 )
 from apps.bookings.repositories import BookingRepository
@@ -659,3 +660,30 @@ class AdminBookingDetailView(GenericAPIView):
             message="Booking retrieved successfully",
             status=status.HTTP_200_OK,
         )
+
+
+class BookingInvoiceView(GenericAPIView):
+    """GET /api/bookings/<id>/invoice/ — downloads a PDF invoice."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, booking_id: int):
+        booking = BookingQueryService.get_booking_detail(booking_id, request.user)
+        if booking is None:
+            return error_response(
+                message="Booking not found", status=status.HTTP_404_NOT_FOUND
+            )
+
+        if not InvoiceService.is_eligible(booking):
+            return error_response(
+                message="Invoice is only available once a booking is confirmed.",
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        pdf_bytes = InvoiceService.generate_invoice_pdf(booking)
+
+        response = HttpResponse(pdf_bytes, content_type="application/pdf")
+        response["Content-Disposition"] = (
+            f'attachment; filename="invoice-{booking.booking_reference}.pdf"'
+        )
+        return response

@@ -29,6 +29,10 @@ from apps.administrations.models import LegalDocument
 from apps.administrations.repositories import LegalDocumentRepository
 from apps.administrations.models import CancellationPolicy
 from apps.vehicles.models import VehicleListing  # for type clarity only
+from django.template.loader import render_to_string
+from weasyprint import HTML
+from django.utils import timezone
+from apps.payments.models import Payment
 
 
 def _generate_booking_reference() -> str:
@@ -478,238 +482,6 @@ class BookingQueryService:
     def get_booking_detail(booking_id: int, customer):
         """Returns the Booking instance, or None if not found / not owned by customer."""
         return BookingRepository.get_booking_by_id_for_customer(booking_id, customer)
-
-
-# class CancellationService:
-
-#     # Only a CONFIRMED booking can be cancelled through this flow.
-#     # PENDING_PAYMENT bookings carry no captured advance — nothing to
-#     # refund — and already auto-expire via Booking.expires_at, so the
-#     # customer can just let one lapse instead of explicitly cancelling.
-#     # ONGOING/COMPLETED/CANCELLED/PAYMENT_FAILED/EXPIRED are all terminal
-#     # or already-in-progress states where "cancel" doesn't apply.
-#     CANCELLABLE_STATUSES = [Booking.Status.CONFIRMED]
-
-#     @staticmethod
-#     def can_cancel(booking) -> tuple[bool, str | None]:
-#         if booking.status not in CancellationService.CANCELLABLE_STATUSES:
-#             return False, (
-#                 f"Bookings in '{booking.get_status_display()}' status cannot be "
-#                 "cancelled here."
-#             )
-#         return True, None
-
-#     @staticmethod
-#     def _hours_until_pickup(booking) -> Decimal:
-#         from datetime import datetime
-
-#         pickup_dt = datetime.combine(booking.pickup_date, booking.pickup_time)
-#         if timezone.is_aware(timezone.now()):
-#             pickup_dt = timezone.make_aware(pickup_dt)
-
-#         delta = pickup_dt - timezone.now()
-#         hours = Decimal(delta.total_seconds()) / Decimal(3600)
-#         # A booking whose pickup has already passed (shouldn't normally
-#         # reach here since it'd usually be ONGOING by then, but a vendor
-#         # who never marked handover could leave it CONFIRMED) is treated
-#         # as 0 hours out — the least generous tier — rather than a
-#         # negative number that wouldn't match any tier range.
-#         return max(hours, Decimal("0")).quantize(Decimal("0.01"))
-
-#     @staticmethod
-#     def _match_tier(policy, payment_mode: str, hours_before_pickup: Decimal):
-#         """
-#         Same range-matching as before, now scoped to the tiers belonging
-#         to `payment_mode`. FULL and PARTIAL schedules are independent —
-#         a booking never matches a tier from the other schedule.
-#         """
-#         for tier in policy.tiers.all():
-#             if tier.payment_mode != payment_mode:
-#                 continue
-#             lower = Decimal(tier.min_hours_before_pickup)
-#             upper = (
-#                 Decimal(tier.max_hours_before_pickup)
-#                 if tier.max_hours_before_pickup is not None
-#                 else None
-#             )
-#             if hours_before_pickup >= lower and (
-#                 upper is None or hours_before_pickup < upper
-#             ):
-#                 return tier
-#         return None
-
-#     @staticmethod
-#     def _tier_payment_mode(booking) -> str:
-#         """
-#         Maps Booking.PaymentMode -> CancellationTier.PaymentMode.
-#         PARTIAL bookings use the partial schedule (100% forfeiture per
-#         current policy). FULL and PAY_AT_PICKUP both use the full-payment
-#         schedule — PAY_AT_PICKUP shouldn't normally reach cancellation
-#         with money collected, but if it does, FULL is the safer default.
-#         """
-#         if booking.payment_mode == Booking.PaymentMode.PARTIAL:
-#             return CancellationTier.PaymentMode.PARTIAL
-#         return CancellationTier.PaymentMode.FULL
-
-#     @staticmethod
-#     def _match_tier_from_snapshot(
-#         tiers: list[dict], payment_mode: str, hours_before_pickup: Decimal
-#     ):
-#         """
-#         Same range-matching as _match_tier, but against the frozen
-#         dict-shaped tiers stored in Booking.cancellation_policy_snapshot
-#         instead of live CancellationTier rows.
-#         """
-#         for tier in tiers:
-#             if tier["payment_mode"] != payment_mode:
-#                 continue
-#             lower = Decimal(tier["min_hours_before_pickup"])
-#             upper = (
-#                 Decimal(tier["max_hours_before_pickup"])
-#                 if tier["max_hours_before_pickup"] is not None
-#                 else None
-#             )
-#             if hours_before_pickup >= lower and (
-#                 upper is None or hours_before_pickup < upper
-#             ):
-#                 return Decimal(tier["refund_percentage"])
-#         return None
-
-#     @staticmethod
-#     def _resolve_refund_percentage(booking) -> tuple[Decimal, dict]:
-#         """
-#         Prefers the policy frozen on the booking at checkout time
-#         (cancellation_policy_snapshot) so that a later policy edit never
-#         changes what a customer is entitled to for a booking made under
-#         the old terms. Falls back to a live lookup only for bookings
-#         created before this snapshot existed (empty/missing snapshot).
-#         """
-#         hours_before_pickup = CancellationService._hours_until_pickup(booking)
-#         tier_payment_mode = CancellationService._tier_payment_mode(booking)
-
-#         snapshot = booking.cancellation_policy_snapshot or {}
-#         snapshot_tiers = snapshot.get("tiers")
-
-#         if snapshot_tiers:
-#             refund_percentage = CancellationService._match_tier_from_snapshot(
-#                 snapshot_tiers, tier_payment_mode, hours_before_pickup
-#             )
-#             meta = {
-#                 "policy_version": snapshot.get("policy_version"),
-#                 "hours_before_pickup": hours_before_pickup,
-#             }
-#             return refund_percentage or Decimal("0"), meta
-
-#         # Legacy fallback: booking predates the snapshot feature.
-#         policy = CancellationPolicyRepository.get_current()
-#         tier = (
-#             CancellationService._match_tier(
-#                 policy, tier_payment_mode, hours_before_pickup
-#             )
-#             if policy
-#             else None
-#         )
-#         refund_percentage = tier.refund_percentage if tier else Decimal("0")
-
-#         meta = {
-#             "policy_version": policy.version if policy else None,
-#             "hours_before_pickup": hours_before_pickup,
-#         }
-#         return refund_percentage, meta
-
-#     @staticmethod
-#     @transaction.atomic
-#     def cancel_booking(
-#         booking,
-#         cancelled_by_user,
-#         reason_code: str,
-#         reason_text: str = "",
-#     ) -> tuple[BookingCancellation | None, str | None]:
-#         """
-#         Cancels a CONFIRMED booking: computes the refund entitlement
-#         from administrations.CancellationPolicy's current tiers, records
-#         a BookingCancellation, and flips the booking to CANCELLED.
-
-#         Does NOT call out to Cashfree to actually issue the refund —
-#         refundable_amount/forfeited_amount are computed and recorded
-#         only. Triggering the real gateway refund is a separate,
-#         not-yet-built step.
-
-#         Returns (BookingCancellation, None) on success, or
-#         (None, error_message) if cancellation isn't allowed right now.
-#         """
-#         booking = Booking.objects.select_for_update().get(pk=booking.pk)
-
-#         allowed, error = CancellationService.can_cancel(booking)
-#         if not allowed:
-#             return None, error
-
-#         if reason_code not in BookingCancellation.CUSTOMER_REASON_CODES:
-#             return None, "Invalid cancellation reason."
-
-#         refund_percentage, meta = CancellationService._resolve_refund_percentage(
-#             booking
-#         )
-
-#         paid_amount = booking.advance_amount  # what's actually been collected
-#         refundable_amount = (paid_amount * refund_percentage / Decimal("100")).quantize(
-#             Decimal("0.01")
-#         )
-#         forfeited_amount = paid_amount - refundable_amount
-
-#         cancellation = BookingCancellationRepository.create_cancellation_record(
-#             booking=booking,
-#             cancelled_by=cancelled_by_user,
-#             cancelled_by_role=Booking.CancelledBy.CUSTOMER,
-#             reason_code=reason_code,
-#             reason_text=reason_text,
-#             policy_version=meta["policy_version"],
-#             hours_before_pickup_at_cancellation=meta["hours_before_pickup"],
-#             refund_percentage=refund_percentage,
-#             refundable_amount=refundable_amount,
-#             forfeited_amount=forfeited_amount,
-#         )
-
-#         booking.status = Booking.Status.CANCELLED
-#         booking.cancelled_at = timezone.now()
-#         booking.cancelled_by_role = Booking.CancelledBy.CUSTOMER
-#         booking.save(update_fields=["status", "cancelled_at", "cancelled_by_role"])
-
-#         return cancellation, None
-
-#     @staticmethod
-#     def preview_cancellation(booking) -> tuple[dict | None, str | None]:
-#         allowed, error = CancellationService.can_cancel(booking)
-#         if not allowed:
-#             return None, error
-
-#         refund_percentage, meta = CancellationService._resolve_refund_percentage(
-#             booking
-#         )
-
-#         paid_amount = booking.advance_amount
-#         refundable_amount = (paid_amount * refund_percentage / Decimal("100")).quantize(
-#             Decimal("0.01")
-#         )
-#         forfeited_amount = paid_amount - refundable_amount
-
-#         policy_info = CancellationPolicyService.get_current_policy()
-
-#         return {
-#             "payment_mode": booking.payment_mode,
-#             "hours_before_pickup": float(meta["hours_before_pickup"]),
-#             "refund_percentage": float(refund_percentage),
-#             "paid_amount": float(paid_amount),
-#             "refundable_amount": float(refundable_amount),
-#             "forfeited_amount": float(forfeited_amount),
-#             "full_payment_rules": (
-#                 policy_info["full_payment_rules"] if policy_info else []
-#             ),
-#             "partial_payment_rules": (
-#                 policy_info["partial_payment_rules"] if policy_info else []
-#             ),
-#             "policy_note": policy_info["note"] if policy_info else "",
-#         }, None
 
 
 class CancellationService:
@@ -1221,3 +993,33 @@ class VendorBookingService:
             return None, f"Unhandled transition target '{new_status}'."
 
         return booking, None
+
+
+class InvoiceService:
+
+    INVOICE_ELIGIBLE_STATUSES = (
+        Booking.Status.CONFIRMED,
+        Booking.Status.ONGOING,
+        Booking.Status.COMPLETED,
+    )
+
+    @staticmethod
+    def is_eligible(booking) -> bool:
+        return booking.status in InvoiceService.INVOICE_ELIGIBLE_STATUSES
+
+    @staticmethod
+    def generate_invoice_pdf(booking) -> bytes:
+        payments = Payment.objects.filter(
+            booking_group_id=booking.booking_group_id
+        ).order_by("initiated_at")
+
+        context = {
+            "booking": booking,
+            "vendor": booking.listing.vendor,
+            "customer": booking.customer,
+            "vehicle_type": booking.listing.vehicle_type,
+            "payments": payments,
+            "invoice_date": timezone.now(),
+        }
+        html_string = render_to_string("bookings/invoice.html", context)
+        return HTML(string=html_string).write_pdf()

@@ -1,0 +1,264 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      @page {
+        size: A4;
+        margin: 2cm;
+      }
+      body {
+        font-family: "Helvetica", "Arial", sans-serif;
+        color: #1a1a1a;
+        font-size: 11pt;
+      }
+      .header {
+        display: table;
+        width: 100%;
+        margin-bottom: 24px;
+        border-bottom: 2px solid #ffd166;
+        padding-bottom: 16px;
+      }
+      .header-left,
+      .header-right {
+        display: table-cell;
+        vertical-align: top;
+      }
+      .header-right {
+        text-align: right;
+      }
+      .brand {
+        font-size: 20pt;
+        font-weight: bold;
+      }
+      .brand-sub {
+        color: #6b7280;
+        font-size: 9pt;
+      }
+      .invoice-title {
+        font-size: 16pt;
+        font-weight: bold;
+        margin: 0;
+      }
+      .meta {
+        color: #6b7280;
+        font-size: 9pt;
+        margin-top: 4px;
+      }
+      .parties {
+        display: table;
+        width: 100%;
+        margin-bottom: 24px;
+      }
+      .party {
+        display: table-cell;
+        width: 50%;
+        vertical-align: top;
+      }
+      .party-label {
+        font-size: 8pt;
+        font-weight: bold;
+        text-transform: uppercase;
+        color: #9ca3af;
+        letter-spacing: 0.05em;
+        margin-bottom: 4px;
+      }
+      .party-name {
+        font-weight: bold;
+        font-size: 12pt;
+      }
+      .party-detail {
+        font-size: 9.5pt;
+        color: #4b5563;
+        margin-top: 2px;
+      }
+      table.line-items {
+        width: 100%;
+        border-collapse: collapse;
+        margin-bottom: 24px;
+      }
+      table.line-items th {
+        text-align: left;
+        font-size: 8.5pt;
+        text-transform: uppercase;
+        color: #6b7280;
+        border-bottom: 1px solid #e5e7eb;
+        padding: 8px 4px;
+      }
+      table.line-items td {
+        padding: 10px 4px;
+        border-bottom: 1px solid #f3f4f6;
+        font-size: 10pt;
+      }
+      .text-right {
+        text-align: right;
+      }
+      .totals {
+        width: 260px;
+        margin-left: auto;
+        margin-bottom: 24px;
+      }
+      .totals-row {
+        display: table;
+        width: 100%;
+        padding: 4px 0;
+      }
+      .totals-label,
+      .totals-value {
+        display: table-cell;
+      }
+      .totals-value {
+        text-align: right;
+      }
+      .totals-final {
+        border-top: 2px solid #1a1a1a;
+        font-weight: bold;
+        font-size: 12pt;
+        padding-top: 8px;
+        margin-top: 4px;
+      }
+      .payments-title {
+        font-size: 9pt;
+        font-weight: bold;
+        text-transform: uppercase;
+        color: #6b7280;
+        margin-bottom: 8px;
+      }
+      table.payments {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 9.5pt;
+      }
+      table.payments th {
+        text-align: left;
+        color: #6b7280;
+        font-size: 8pt;
+        text-transform: uppercase;
+        border-bottom: 1px solid #e5e7eb;
+        padding: 6px 4px;
+      }
+      table.payments td {
+        padding: 6px 4px;
+        border-bottom: 1px solid #f9fafb;
+      }
+      .footer-note {
+        margin-top: 32px;
+        font-size: 8.5pt;
+        color: #9ca3af;
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="header">
+      <div class="header-left">
+        <div class="brand">tripzido</div>
+        <div class="brand-sub">Bike Rentals for Every Kind of Trip</div>
+      </div>
+      <div class="header-right">
+        <p class="invoice-title">INVOICE</p>
+        <p class="meta">Booking Ref: {{ booking.booking_reference }}</p>
+        <p class="meta">Issued: {{ invoice_date|date:"d M Y" }}</p>
+      </div>
+    </div>
+
+    <div class="parties">
+      <div class="party">
+        <div class="party-label">Rented From</div>
+        <div class="party-name">{{ vendor.business_name }}</div>
+        {% if vendor.gst_number %}
+        <div class="party-detail">GSTIN: {{ vendor.gst_number }}</div>
+        {% endif %} {% if vendor.phone_number %}
+        <div class="party-detail">{{ vendor.phone_number }}</div>
+        {% endif %}
+        <div class="party-detail">Booked via Tripzido</div>
+      </div>
+      <div class="party">
+        <div class="party-label">Billed To</div>
+        <div class="party-name">{{ customer.get_full_name }}</div>
+        <div class="party-detail">{{ customer.phone_number }}</div>
+      </div>
+    </div>
+
+    <table class="line-items">
+      <thead>
+        <tr>
+          <th>Description</th>
+          <th>Pickup</th>
+          <th>Dropoff</th>
+          <th class="text-right">Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>
+            {{ vehicle_type.brand.name }} {{ vehicle_type.name }}<br />
+            <span style="color: #6b7280; font-size: 9pt"
+              >{{ vehicle_type.transmission_type}} &bull;
+              {{vehicle_type.fuel_type }}</span
+            >
+          </td>
+          <td>
+            {{ booking.pickup_date|date:"d M Y" }}<br />
+            {{ booking.pickup_time|time:"h:i A" }}
+          </td>
+          <td>
+            {{ booking.dropoff_date|date:"d M Y" }}<br />
+            {{ booking.dropoff_time|time:"h:i A" }}
+          </td>
+          <td class="text-right">₹{{ booking.listing_amount }}</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="totals">
+      <div class="totals-row">
+        <div class="totals-label">Rent Amount</div>
+        <div class="totals-value">₹{{ booking.listing_amount }}</div>
+      </div>
+      <div class="totals-row">
+        <div class="totals-label">Security Deposit</div>
+        <div class="totals-value">₹{{ booking.security_deposit_amount }}</div>
+      </div>
+      <div class="totals-row">
+        <div class="totals-label">Amount Paid</div>
+        <div class="totals-value">₹{{ booking.advance_amount }}</div>
+      </div>
+      <div class="totals-row totals-final">
+        <div class="totals-label">Balance Due</div>
+        <div class="totals-value">₹{{ booking.remaining_amount }}</div>
+      </div>
+    </div>
+
+    <div class="payments-title">Payment History</div>
+    <table class="payments">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Type</th>
+          <th>Status</th>
+          <th class="text-right">Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for payment in payments %}
+        <tr>
+          <td>{{ payment.initiated_at|date:"d M Y, h:i A" }}</td>
+          <td>{{ payment.get_payment_type_display }}</td>
+          <td>{{ payment.get_status_display }}</td>
+          <td class="text-right">₹{{ payment.amount }}</td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="4" style="color: #9ca3af">No payments recorded.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <p class="footer-note">
+      This is a system-generated invoice from Tripzido on behalf of
+      {{vendor.business_name }}. For support, contact Tripzido customer service.
+    </p>
+  </body>
+</html>

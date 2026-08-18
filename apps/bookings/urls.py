@@ -4,6 +4,7 @@ from apps.bookings.views import (
     AdminBookingDetailView,
     AdminBookingListView,
     CreateBookingOrderView,
+    BookingInvoiceView,
     BookingPaymentStatusView,
     CashfreeWebhookView,
     CustomerBookingsView,
@@ -72,5 +73,10 @@ urlpatterns = [
         "admin/bookings/<int:booking_id>/",
         AdminBookingDetailView.as_view(),
         name="admin-booking-detail",
+    ),
+    path(
+        "<int:booking_id>/invoice/",
+        BookingInvoiceView.as_view(),
+        name="booking-invoice",
     ),
 ]
