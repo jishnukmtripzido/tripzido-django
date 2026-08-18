@@ -13,6 +13,7 @@ from apps.vendors.serializers import (
     AdminVendorDetailSerializer,
     AdminVendorDocumentSerializer,
     AdminVendorListSerializer,
+    AdminVendorRegistrationSerializer,
     AdminVendorStatusUpdateSerializer,
     AdminVendorSubscriptionAssignSerializer,
     AdminVendorSubscriptionSerializer,
@@ -25,6 +26,7 @@ from apps.vendors.services import (
     AdminSubscriptionPlanService,
     AdminVendorCommissionService,
     AdminVendorDocumentService,
+    AdminVendorRegistrationService,
     AdminVendorService,
     AdminVendorSubscriptionService,
     VendorTermsService,
@@ -521,4 +523,33 @@ class AdminSubscriptionPlanDetailView(GenericAPIView):
             data=None,
             message="Plan deleted successfully",
             status=status.HTTP_204_NO_CONTENT,
+        )
+
+
+class AdminVendorRegistrationView(GenericAPIView):
+    """POST /api/vendors/admin/register/"""
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+    serializer_class = AdminVendorRegistrationSerializer
+
+    def post(self, request):
+        serializer = AdminVendorRegistrationSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid data",
+                errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        vendor, error = AdminVendorRegistrationService.register(
+            serializer.validated_data, request.user
+        )
+        if vendor is None:
+            return error_response(message=error, status=status.HTTP_400_BAD_REQUEST)
+
+        output = AdminVendorDetailSerializer(vendor)
+        return success_response(
+            data=output.data,
+            message="Vendor registered successfully",
+            status=status.HTTP_201_CREATED,
         )

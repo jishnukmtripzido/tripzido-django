@@ -3,6 +3,7 @@ from celery import shared_task
 from django.core.cache import cache
 import requests
 from django.conf import settings
+from django.core.mail import send_mail
 
 # from twilio.rest import Client  # uncomment when ready
 
@@ -42,4 +43,22 @@ def send_otp_sms(self, phone_number, otp):
 
     except Exception as exc:
         # Auto retry up to 3 times if SMS fails
+        raise self.retry(exc=exc)
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=5)
+def send_otp_email(self, email, otp):
+    try:
+        send_mail(
+            subject="Your Tripzido password reset code",
+            message=(
+                f"Your one-time code is {otp}. It expires in 10 minutes. "
+                "If you didn't request this, you can safely ignore this email."
+            ),
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[email],
+            fail_silently=False,
+        )
+        return {"status": "sent", "email": email}
+    except Exception as exc:
         raise self.retry(exc=exc)

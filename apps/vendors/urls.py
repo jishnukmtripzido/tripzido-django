@@ -10,6 +10,7 @@ from apps.vendors.views import (
     AdminVendorDetailView,
     AdminVendorDocumentsView,
     AdminVendorListView,
+    AdminVendorRegistrationView,
     AdminVendorStatusUpdateView,
     AdminVendorSubscriptionAssignView,
     AdminVendorSubscriptionsView,
@@ -84,5 +85,10 @@ urlpatterns = [
         "admin/subscription-plans/<int:plan_id>/",
         AdminSubscriptionPlanDetailView.as_view(),
         name="admin-subscription-plan-detail",
+    ),
+    path(
+        "admin/register/",
+        AdminVendorRegistrationView.as_view(),
+        name="admin-vendor-registration",
     ),
 ]

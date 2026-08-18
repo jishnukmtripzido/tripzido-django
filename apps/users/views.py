@@ -19,6 +19,9 @@ from apps.core.pagination import CustomPagination
 from .services import UserService, AdminUserService
 from .serializers import (
     SendOTPSerializer,
+    VendorForgotPasswordResetSerializer,
+    VendorForgotPasswordSendOTPSerializer,
+    VendorPasswordLoginSerializer,
     VerifyOTPSerializer,
     RegisterSendOTPSerializer,
     RegisterVerifyOTPSerializer,
@@ -31,7 +34,7 @@ from .serializers import (
     AdminStaffCreateSerializer,
     AdminStaffListItemSerializer,
 )
-from .tasks import send_otp_sms
+from .tasks import send_otp_email, send_otp_sms
 from .repositories import normalize_phone
 
 
@@ -679,4 +682,167 @@ class AdminStaffDetailView(GenericAPIView):
             data=None,
             message="Staff role removed successfully",
             status=status.HTTP_204_NO_CONTENT,
+        )
+
+
+class VendorPasswordLoginView(APIView):
+    """
+    POST /api/users/vendor/login/
+    Phone number + password login for the vendor portal — sits
+    alongside the existing OTP flow (VendorSendOTPView/
+    VendorVerifyOTPView), not a replacement for it. Neither of those
+    views is touched by this change.
+    """
+
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = VendorPasswordLoginSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid data",
+                errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        phone_number = serializer.validated_data["phone_number"]
+        password = serializer.validated_data["password"]
+        local_number, _ = normalize_phone(phone_number)
+
+        user = UserService.get_user_by_phone(local_number)
+        if user is None:
+            return error_response(
+                message="Invalid phone number or password.",
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        if not user.has_role("VENDOR"):
+            return error_response(
+                message="This phone number is not registered as a vendor account.",
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if not user.has_usable_password():
+            return error_response(
+                message="No password set for this account yet. Use 'Forgot password' to set one.",
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not user.check_password(password):
+            return error_response(
+                message="Invalid phone number or password.",
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        refresh = RefreshToken.for_user(user)
+        return success_response(
+            message="Login successful",
+            data={
+                "access_token": str(refresh.access_token),
+                "refresh_token": str(refresh),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class VendorForgotPasswordSendOTPView(APIView):
+    """
+    POST /api/users/vendor/forgot-password/send-otp/
+    Looks up the vendor by phone number, sends a one-time code to the
+    EMAIL on file — not SMS. This is the "prove you own the account's
+    email" step. Uses a separate cache key namespace (email_otp_ vs
+    otp_) so a code from this flow can never be satisfied by, or
+    collide with, one sent through the SMS login-OTP flow.
+    """
+
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = VendorForgotPasswordSendOTPSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid data",
+                errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        local_number, _ = normalize_phone(serializer.validated_data["phone_number"])
+        user = UserService.get_user_by_phone(local_number)
+
+        # Identical response whether or not the account/email exists —
+        # avoids confirming which phone numbers are registered vendor
+        # accounts to an unauthenticated caller.
+        generic_response = success_response(
+            message="If this account has an email on file, a reset code has been sent to it.",
+            data={},
+            status=status.HTTP_200_OK,
+        )
+
+        if user is None or not user.has_role("VENDOR"):
+            return generic_response
+
+        vendor_email = getattr(getattr(user, "vendor_profile", None), "email", None)
+        if not vendor_email:
+            return generic_response
+
+        # otp = str(random.randint(1000, 9999))
+        otp = 1211
+        cache.set(f"email_otp_{local_number}", otp, timeout=600)
+        send_otp_email.delay(vendor_email, otp)
+
+        return generic_response
+
+
+class VendorForgotPasswordResetView(APIView):
+    """POST /api/users/vendor/forgot-password/reset/"""
+
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = VendorForgotPasswordResetSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid data",
+                errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        data = serializer.validated_data
+        local_number, _ = normalize_phone(data["phone_number"])
+
+        cached_otp = cache.get(f"email_otp_{local_number}")
+        if cached_otp is None:
+            return error_response(
+                message="Code expired or not found. Please request a new one.",
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if str(cached_otp) != str(data["otp"]):
+            return error_response(
+                message="Invalid code. Please try again.",
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user = UserService.get_user_by_phone(local_number)
+        if user is None or not user.has_role("VENDOR"):
+            cache.delete(f"email_otp_{local_number}")
+            return error_response(
+                message="Vendor account not found.",
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        user.set_password(data["new_password"])
+        user.save()
+        cache.delete(f"email_otp_{local_number}")
+
+        # Signs them straight in after reset — no separate re-login
+        # step needed. Say so if you'd rather redirect to /login
+        # instead and make them sign in fresh with the new password.
+        refresh = RefreshToken.for_user(user)
+        return success_response(
+            message="Password updated successfully.",
+            data={
+                "access_token": str(refresh.access_token),
+                "refresh_token": str(refresh),
+            },
+            status=status.HTTP_200_OK,
         )

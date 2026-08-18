@@ -314,3 +314,55 @@ class AdminVendorSubscriptionService:
             AdminVendorSubscriptionRepository.assign(vendor_id, plan_id, admin_user),
             None,
         )
+
+
+class AdminVendorRegistrationService:
+
+    @staticmethod
+    @transaction.atomic
+    def register(data: dict, admin_user):
+        from apps.users.models import User, Role, UserRoleAssignment
+
+        phone_number = data["phone_number"]
+
+        if User.objects.filter(phone_number=phone_number).exists():
+            return None, "A user with this phone number already exists."
+        if Vendor.objects.filter(email__iexact=data["email"]).exists():
+            return None, "A vendor with this email already exists."
+
+        user = User.objects.create(
+            phone_number=phone_number,
+            phone_country_code=data.get("phone_country_code", "+91"),
+            first_name=data["owner_name"],
+            email=data["email"],
+        )
+        user.set_password(data["password"])
+        user.save()
+
+        role, _ = Role.objects.get_or_create(
+            system_role=Role.SystemRole.VENDOR,
+            defaults={"is_system": True},
+        )
+        UserRoleAssignment.objects.get_or_create(
+            user=user,
+            role=role,
+            defaults={"assigned_by": admin_user},
+        )
+
+        vendor = Vendor.objects.create(
+            user=user,
+            business_name=data["business_name"],
+            owner_name=data["owner_name"],
+            email=data["email"],
+            phone_number=phone_number,
+            address=data["address"],
+            gst_number=data.get("gst_number", ""),
+            # Approved immediately, not PENDING — admin filling this
+            # form in and vetting the details themselves already IS
+            # the review step, so there's no separate approval queue
+            # for vendors created this way.
+            status=Vendor.Status.APPROVED,
+            reviewed_by=admin_user,
+            reviewed_at=timezone.now(),
+        )
+        return vendor, None

@@ -247,3 +247,20 @@ class AdminStaffCreateSerializer(serializers.Serializer):
             (Role.SystemRole.SUPER_ADMIN, "Super Admin"),
         ]
     )
+
+
+class VendorPasswordLoginSerializer(serializers.Serializer):
+    phone_number = serializers.CharField()
+    password = serializers.CharField(write_only=True, trim_whitespace=False)
+
+
+class VendorForgotPasswordSendOTPSerializer(serializers.Serializer):
+    phone_number = serializers.CharField()
+
+
+class VendorForgotPasswordResetSerializer(serializers.Serializer):
+    phone_number = serializers.CharField()
+    otp = serializers.CharField()
+    new_password = serializers.CharField(
+        write_only=True, trim_whitespace=False, min_length=8
+    )
