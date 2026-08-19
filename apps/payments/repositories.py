@@ -1,7 +1,7 @@
 from django.db import transaction
 from django.db.models import Prefetch, Q
 from apps.bookings.models import Booking
-from apps.payments.models import VendorPayout, VendorPayoutItem
+from apps.payments.models import RefundRecord, VendorPayout, VendorPayoutItem
 from apps.vendors.models import BankAccount
 
 
@@ -174,3 +174,37 @@ class AdminVendorPayoutRepository:
         payout.status = target_status
         payout.save()
         return payout, None
+
+
+class AdminRefundRepository:
+
+    @staticmethod
+    def get_all(status_filter=None, search=None):
+        qs = RefundRecord.objects.select_related(
+            "cancellation__booking__customer",
+            "cancellation__booking__listing__vendor",
+            "processed_by",
+        ).order_by("-created_at")
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+        if search:
+            qs = qs.filter(
+                Q(cancellation__booking__booking_reference__icontains=search)
+                | Q(cancellation__booking__customer__phone_number__icontains=search)
+                | Q(
+                    cancellation__booking__listing__vendor__business_name__icontains=search
+                )
+            )
+        return qs
+
+    @staticmethod
+    def get_by_id(refund_id: int):
+        return (
+            RefundRecord.objects.select_related(
+                "cancellation__booking__customer",
+                "cancellation__booking__listing__vendor",
+                "processed_by",
+            )
+            .filter(id=refund_id)
+            .first()
+        )

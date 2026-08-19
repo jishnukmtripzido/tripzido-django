@@ -5,7 +5,7 @@ from django.db import transaction
 from django.utils import timezone
 from datetime import timedelta
 from apps.bookings.models import Booking, BookingCancellation
-from apps.payments.models import Payment
+from apps.payments.models import Payment, RefundRecord
 from apps.bookings.cashfree_client import CashfreeClient
 from apps.vehicles.repositories import VehicleDetailRepository
 from apps.vehicles.services import AvailabilityService, VehicleDetailService
@@ -674,6 +674,19 @@ class CancellationService:
         )
         forfeited_amount = paid_amount - refundable_amount
 
+        # cancellation = BookingCancellationRepository.create_cancellation_record(
+        #     booking=booking,
+        #     cancelled_by=cancelled_by_user,
+        #     cancelled_by_role=cancelled_by_role,
+        #     reason_code=reason_code,
+        #     reason_text=reason_text,
+        #     policy_version=policy_version,
+        #     hours_before_pickup_at_cancellation=hours_before_pickup,
+        #     refund_percentage=refund_percentage,
+        #     refundable_amount=refundable_amount,
+        #     forfeited_amount=forfeited_amount,
+        # )
+
         cancellation = BookingCancellationRepository.create_cancellation_record(
             booking=booking,
             cancelled_by=cancelled_by_user,
@@ -686,6 +699,22 @@ class CancellationService:
             refundable_amount=refundable_amount,
             forfeited_amount=forfeited_amount,
         )
+
+        # Auto-create the tracking record admin uses to mark this
+        # refund processed later — only when there's actually money to
+        # refund. A 0% refund (fully forfeited) doesn't need one.
+        if refundable_amount > 0:
+            RefundRecord.objects.create(
+                cancellation=cancellation,
+                amount=refundable_amount,
+            )
+
+        booking.status = Booking.Status.CANCELLED
+        booking.cancelled_at = timezone.now()
+        booking.cancelled_by_role = cancelled_by_role
+        booking.save(update_fields=["status", "cancelled_at", "cancelled_by_role"])
+
+        return cancellation
 
         booking.status = Booking.Status.CANCELLED
         booking.cancelled_at = timezone.now()

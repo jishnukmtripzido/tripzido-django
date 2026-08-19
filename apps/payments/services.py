@@ -1,8 +1,10 @@
 from django.db.models import Q
+from django.utils import timezone
 
-from apps.payments.models import Payment
+from apps.payments.models import Payment, RefundRecord
 from apps.payments.repositories import (
     AdminEligibleBookingRepository,
+    AdminRefundRepository,
     AdminVendorPayoutRepository,
     VendorPayoutRepository,
 )
@@ -73,3 +75,43 @@ class AdminPaymentService:
         payment.is_reconciled = not payment.is_reconciled
         payment.save(update_fields=["is_reconciled"])
         return payment
+
+
+class AdminRefundService:
+
+    @staticmethod
+    def get_all(status_filter=None, search=None):
+        return AdminRefundRepository.get_all(status_filter, search)
+
+    @staticmethod
+    def update_status(
+        refund_id: int,
+        target_status: str,
+        admin_user,
+        reference_number: str = "",
+        note: str = "",
+    ):
+        refund = AdminRefundRepository.get_by_id(refund_id)
+        if refund is None:
+            return None, "Refund not found"
+
+        if target_status == RefundRecord.Status.PROCESSED:
+            if not reference_number.strip():
+                return (
+                    None,
+                    "A reference number is required to mark this refund as processed.",
+                )
+            refund.reference_number = reference_number
+            refund.processed_at = timezone.now()
+            refund.processed_by = admin_user
+        elif target_status == RefundRecord.Status.PENDING:
+            # Reset — e.g. correcting a mistaken mark-as-processed.
+            refund.processed_at = None
+            refund.processed_by = None
+
+        if note:
+            refund.note = note
+
+        refund.status = target_status
+        refund.save()
+        return refund, None

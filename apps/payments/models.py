@@ -185,3 +185,66 @@ class VendorPayoutItem(BaseModel):
 
     def __str__(self):
         return f"PayoutItem(booking={self.booking.booking_reference}) ₹{self.amount}"
+
+
+class RefundRecord(BaseModel):
+    """
+    Tracks the manual refund owed to a customer for one cancelled
+    booking. Auto-created (status=PENDING) the moment a
+    BookingCancellation is written with money owed — see the one-line
+    hook added to CancellationService._finalize_cancellation — so
+    staff never manually "create" a refund; every cancellation with a
+    refundable amount already has one waiting here.
+
+    Entirely manual by design, same as VendorPayout: no gateway
+    integration yet (a real Cashfree refund call is a planned,
+    separate, not-yet-built piece). Staff process the actual refund
+    through Cashfree's own dashboard or a bank transfer outside this
+    system, then record a reference number here.
+    """
+
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending Refund"
+        PROCESSED = "PROCESSED", "Refunded"
+        FAILED = "FAILED", "Refund Failed"
+
+    cancellation = models.OneToOneField(
+        "bookings.BookingCancellation",
+        on_delete=models.CASCADE,
+        related_name="refund_record",
+    )
+
+    # Snapshot from BookingCancellation.refundable_amount at creation
+    # time — never read live off cancellation again, same reasoning as
+    # every other financial snapshot in this codebase.
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+
+    status = models.CharField(
+        max_length=20, choices=Status.choices, default=Status.PENDING, db_index=True
+    )
+
+    reference_number = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Gateway/bank refund reference number, entered once the refund completes.",
+    )
+    processed_at = models.DateTimeField(null=True, blank=True)
+    processed_by = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="refunds_marked_processed",
+        help_text="Staff member who recorded this refund as processed.",
+    )
+    note = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["status"])]
+
+    def __str__(self):
+        return (
+            f"Refund(booking={self.cancellation.booking.booking_reference}) "
+            f"₹{self.amount} [{self.status}]"
+        )

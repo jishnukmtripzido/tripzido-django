@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from apps.payments.models import VendorPayout, VendorPayoutItem, Payment
+from apps.payments.models import RefundRecord, VendorPayout, VendorPayoutItem, Payment
 
 
 class VendorPayoutListSerializer(serializers.ModelSerializer):
@@ -216,4 +216,69 @@ class AdminVendorPayoutCreateSerializer(serializers.Serializer):
 class AdminVendorPayoutStatusUpdateSerializer(serializers.Serializer):
     status = serializers.ChoiceField(choices=VendorPayout.Status.choices)
     utr_number = serializers.CharField(required=False, allow_blank=True, default="")
+    note = serializers.CharField(required=False, allow_blank=True, default="")
+
+
+class AdminRefundSerializer(serializers.ModelSerializer):
+    status_label = serializers.CharField(source="get_status_display", read_only=True)
+    booking_reference = serializers.CharField(
+        source="cancellation.booking.booking_reference", read_only=True
+    )
+    customer_name = serializers.SerializerMethodField()
+    customer_phone = serializers.CharField(
+        source="cancellation.booking.customer.phone_number", read_only=True
+    )
+    vendor_name = serializers.CharField(
+        source="cancellation.booking.listing.vendor.business_name", read_only=True
+    )
+    reason_label = serializers.CharField(
+        source="cancellation.get_reason_code_display", read_only=True
+    )
+    cancelled_at = serializers.DateTimeField(
+        source="cancellation.created_at", read_only=True
+    )
+    processed_by_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = RefundRecord
+        fields = [
+            "id",
+            "booking_reference",
+            "customer_name",
+            "customer_phone",
+            "vendor_name",
+            "reason_label",
+            "amount",
+            "status",
+            "status_label",
+            "reference_number",
+            "processed_at",
+            "processed_by_name",
+            "note",
+            "cancelled_at",
+            "created_at",
+        ]
+
+    def get_customer_name(self, obj):
+        customer = obj.cancellation.booking.customer
+        return (
+            f"{customer.first_name} {customer.last_name or ''}".strip()
+            or customer.phone_number
+        )
+
+    def get_processed_by_name(self, obj):
+        return obj.processed_by.get_full_name() if obj.processed_by else None
+
+
+class AdminRefundStatusUpdateSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(
+        choices=[
+            (RefundRecord.Status.PROCESSED, "Refunded"),
+            (RefundRecord.Status.FAILED, "Refund Failed"),
+            (RefundRecord.Status.PENDING, "Pending Refund"),
+        ]
+    )
+    reference_number = serializers.CharField(
+        required=False, allow_blank=True, default=""
+    )
     note = serializers.CharField(required=False, allow_blank=True, default="")

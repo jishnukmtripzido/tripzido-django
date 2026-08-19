@@ -108,3 +108,7 @@ class VendorTermsAdmin(SoftDeleteAdmin):
     list_filter = ("is_current",)
     search_fields = ("vendor__business_name",)
     readonly_fields = ("is_deleted_display", "version")
+
+
+
+

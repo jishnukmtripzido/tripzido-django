@@ -3,6 +3,8 @@ from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 
 from apps.payments.serializers import (
+    AdminRefundSerializer,
+    AdminRefundStatusUpdateSerializer,
     VendorPayoutListSerializer,
     VendorPayoutDetailSerializer,
     AdminEligibleBookingSerializer,
@@ -13,11 +15,13 @@ from apps.payments.serializers import (
     AdminPaymentSerializer,
 )
 from apps.payments.services import (
+    AdminRefundService,
     VendorPayoutService,
     AdminEligibleBookingService,
     AdminVendorPayoutService,
     AdminPaymentService,
 )
+from apps.payments.repositories import AdminRefundRepository
 from apps.core.responses import success_response, error_response
 from apps.core.pagination import CustomPagination
 from apps.core.permissions import IsStaffRole
@@ -266,5 +270,83 @@ class AdminPaymentToggleReconciledView(GenericAPIView):
         return success_response(
             data=serializer.data,
             message="Payment reconciliation status updated",
+            status=status.HTTP_200_OK,
+        )
+
+
+class AdminRefundListView(GenericAPIView):
+    """GET /api/payments/admin/refunds/?status=&search=&page="""
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+    serializer_class = AdminRefundSerializer
+    pagination_class = CustomPagination
+
+    def get(self, request):
+        status_filter = request.query_params.get("status")
+        search = request.query_params.get("search")
+        queryset = AdminRefundService.get_all(status_filter, search)
+        page = self.paginate_queryset(queryset)
+        serializer = self.get_serializer(page, many=True)
+        paginated_response = self.get_paginated_response(serializer.data)
+        return success_response(
+            data=paginated_response.data,
+            message="Refunds retrieved successfully",
+            status=status.HTTP_200_OK,
+        )
+
+
+class AdminRefundDetailView(GenericAPIView):
+    """GET /api/payments/admin/refunds/<int:refund_id>/"""
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+    serializer_class = AdminRefundSerializer
+
+    def get(self, request, refund_id: int):
+        refund = AdminRefundRepository.get_by_id(refund_id)
+        if refund is None:
+            return error_response(
+                message="Refund not found", status=status.HTTP_404_NOT_FOUND
+            )
+        serializer = self.get_serializer(refund)
+        return success_response(
+            data=serializer.data,
+            message="Refund retrieved successfully",
+            status=status.HTTP_200_OK,
+        )
+
+
+class AdminRefundStatusUpdateView(GenericAPIView):
+    """PATCH /api/payments/admin/refunds/<int:refund_id>/status/"""
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+    serializer_class = AdminRefundStatusUpdateSerializer
+
+    def patch(self, request, refund_id: int):
+        serializer = AdminRefundStatusUpdateSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid data",
+                errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        data = serializer.validated_data
+        refund, error = AdminRefundService.update_status(
+            refund_id,
+            data["status"],
+            request.user,
+            data.get("reference_number", ""),
+            data.get("note", ""),
+        )
+        if refund is None:
+            code = (
+                status.HTTP_404_NOT_FOUND
+                if error == "Refund not found"
+                else status.HTTP_400_BAD_REQUEST
+            )
+            return error_response(message=error, status=code)
+        output = AdminRefundSerializer(refund)
+        return success_response(
+            data=output.data,
+            message="Refund status updated successfully",
             status=status.HTTP_200_OK,
         )
