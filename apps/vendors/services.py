@@ -13,7 +13,13 @@ from django.utils import timezone
 from django.db import transaction
 from django.db.models import ProtectedError
 
-from apps.vendors.models import BankAccount, SubscriptionPlan, Vendor, VendorDocument
+from apps.vendors.models import (
+    BankAccount,
+    SubscriptionPlan,
+    Vendor,
+    VendorDocument,
+    VendorTeamMember,
+)
 
 
 class VendorTermsService:
@@ -366,3 +372,53 @@ class AdminVendorRegistrationService:
             reviewed_at=timezone.now(),
         )
         return vendor, None
+
+
+class AdminVendorTeamService:
+
+    @staticmethod
+    def get_team(vendor_id: int):
+        return (
+            VendorTeamMember.objects.filter(vendor_id=vendor_id)
+            .select_related("user", "added_by")
+            .order_by("-created_at")
+        )
+
+    @staticmethod
+    @transaction.atomic
+    def add_team_member(vendor_id: int, data: dict, admin_user):
+        from apps.users.models import User, Role, UserRoleAssignment
+
+        vendor = Vendor.objects.filter(id=vendor_id).first()
+        if vendor is None:
+            return None, "Vendor not found"
+
+        if User.objects.filter(phone_number=data["phone_number"]).exists():
+            return None, "A user with this phone number already exists."
+
+        user = User.objects.create(
+            phone_number=data["phone_number"],
+            phone_country_code=data.get("phone_country_code", "+91"),
+            first_name=data["first_name"],
+            last_name=data.get("last_name", ""),
+            email=data["email"],
+        )
+        user.set_password(data["password"])
+        user.save()
+
+        role, _ = Role.objects.get_or_create(
+            system_role=Role.SystemRole.VENDOR, defaults={"is_system": True}
+        )
+        UserRoleAssignment.objects.get_or_create(
+            user=user, role=role, defaults={"assigned_by": admin_user}
+        )
+
+        member = VendorTeamMember.objects.create(
+            vendor=vendor, user=user, added_by=admin_user
+        )
+        return member, None
+
+    @staticmethod
+    def remove_team_member(member_id: int):
+        deleted, _ = VendorTeamMember.objects.filter(id=member_id).delete()
+        return deleted > 0

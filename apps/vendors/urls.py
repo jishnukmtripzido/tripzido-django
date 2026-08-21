@@ -14,6 +14,8 @@ from apps.vendors.views import (
     AdminVendorStatusUpdateView,
     AdminVendorSubscriptionAssignView,
     AdminVendorSubscriptionsView,
+    AdminVendorTeamMemberDetailView,
+    AdminVendorTeamView,
     VendorDashboardView,
     VendorTermsView,
     VendorTermsManageView,
@@ -90,5 +92,15 @@ urlpatterns = [
         "admin/register/",
         AdminVendorRegistrationView.as_view(),
         name="admin-vendor-registration",
+    ),
+    path(
+        "admin/vendors/<int:vendor_id>/team/",
+        AdminVendorTeamView.as_view(),
+        name="admin-vendor-team",
+    ),
+    path(
+        "admin/team/<int:member_id>/",
+        AdminVendorTeamMemberDetailView.as_view(),
+        name="admin-vendor-team-member-detail",
     ),
 ]

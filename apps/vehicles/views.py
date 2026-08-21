@@ -381,7 +381,7 @@ class VendorFleetListView(GenericAPIView):
 
     @extend_schema(responses=VendorFleetListingSerializer(many=True))
     def get(self, request):
-        vendor = getattr(request.user, "vendor_profile", None)
+        vendor = request.user.get_vendor_profile()
         if vendor is None:
             return error_response(
                 message="This account has no vendor profile.",
@@ -409,7 +409,7 @@ class VendorFleetListView(GenericAPIView):
             )
 
     def post(self, request):
-        vendor = getattr(request.user, "vendor_profile", None)
+        vendor = request.user.get_vendor_profile()
         if vendor is None:
             return error_response(
                 message="This account has no vendor profile.",
@@ -471,7 +471,7 @@ class VendorListingDetailView(GenericAPIView):
 
     @extend_schema(responses=VendorListingDetailSerializer)
     def get(self, request, listing_id: int):
-        vendor = getattr(request.user, "vendor_profile", None)
+        vendor = request.user.get_vendor_profile()
         if vendor is None:
             return error_response(
                 message="This account has no vendor profile.",
@@ -495,7 +495,7 @@ class VendorListingDetailView(GenericAPIView):
         )
 
     def patch(self, request, listing_id: int):
-        vendor = getattr(request.user, "vendor_profile", None)
+        vendor = request.user.get_vendor_profile()
         if vendor is None:
             return error_response(
                 message="This account has no vendor profile.",
@@ -620,7 +620,7 @@ class VendorScheduleTemplateListCreateView(GenericAPIView):
     serializer_class = ScheduleTemplateSerializer
 
     def get(self, request):
-        vendor = getattr(request.user, "vendor_profile", None)
+        vendor = request.user.get_vendor_profile()
         if vendor is None:
             return error_response(
                 message="This account has no vendor profile.",
@@ -635,7 +635,7 @@ class VendorScheduleTemplateListCreateView(GenericAPIView):
         )
 
     def post(self, request):
-        vendor = getattr(request.user, "vendor_profile", None)
+        vendor = request.user.get_vendor_profile()
         if vendor is None:
             return error_response(
                 message="This account has no vendor profile.",
@@ -678,7 +678,7 @@ class VendorListingImagesView(GenericAPIView):
     serializer_class = VendorListingImageDetailSerializer
 
     def post(self, request, listing_id: int):
-        vendor = getattr(request.user, "vendor_profile", None)
+        vendor = request.user.get_vendor_profile()
         if vendor is None:
             return error_response(
                 message="This account has no vendor profile.",
@@ -730,7 +730,7 @@ class VendorListingImageDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
     def delete(self, request, listing_id: int, image_id: int):
-        vendor = getattr(request.user, "vendor_profile", None)
+        vendor = request.user.get_vendor_profile()
         if vendor is None:
             return error_response(
                 message="This account has no vendor profile.",
@@ -763,7 +763,7 @@ class VendorBlockedPeriodListCreateView(GenericAPIView):
     pagination_class = CustomPagination
 
     def get(self, request):
-        vendor = getattr(request.user, "vendor_profile", None)
+        vendor = request.user.get_vendor_profile()
         if vendor is None:
             return error_response(
                 message="This account has no vendor profile.",
@@ -780,7 +780,7 @@ class VendorBlockedPeriodListCreateView(GenericAPIView):
         )
 
     def post(self, request):
-        vendor = getattr(request.user, "vendor_profile", None)
+        vendor = request.user.get_vendor_profile()
         if vendor is None:
             return error_response(
                 message="This account has no vendor profile.",
@@ -818,7 +818,7 @@ class VendorBlockedPeriodDetailView(GenericAPIView):
     serializer_class = VendorBlockedPeriodUpdateSerializer
 
     def patch(self, request, block_id: int):
-        vendor = getattr(request.user, "vendor_profile", None)
+        vendor = request.user.get_vendor_profile()
         if vendor is None:
             return error_response(
                 message="This account has no vendor profile.",
@@ -854,7 +854,7 @@ class VendorBlockedPeriodDetailView(GenericAPIView):
         )
 
     def delete(self, request, block_id: int):
-        vendor = getattr(request.user, "vendor_profile", None)
+        vendor = request.user.get_vendor_profile()
         if vendor is None:
             return error_response(
                 message="This account has no vendor profile.",
@@ -888,7 +888,7 @@ class VendorScheduleTemplateDetailView(GenericAPIView):
     serializer_class = ScheduleTemplateSerializer
 
     def get(self, request, template_id: int):
-        vendor = getattr(request.user, "vendor_profile", None)
+        vendor = request.user.get_vendor_profile()
         if vendor is None:
             return error_response(
                 message="This account has no vendor profile.",
@@ -907,7 +907,7 @@ class VendorScheduleTemplateDetailView(GenericAPIView):
         )
 
     def patch(self, request, template_id: int):
-        vendor = getattr(request.user, "vendor_profile", None)
+        vendor = request.user.get_vendor_profile()
         if vendor is None:
             return error_response(
                 message="This account has no vendor profile.",
@@ -944,7 +944,7 @@ class VendorScheduleTemplateDetailView(GenericAPIView):
         )
 
     def delete(self, request, template_id: int):
-        vendor = getattr(request.user, "vendor_profile", None)
+        vendor = request.user.get_vendor_profile()
         if vendor is None:
             return error_response(
                 message="This account has no vendor profile.",
@@ -972,7 +972,7 @@ class VendorPickupPointListCreateView(GenericAPIView):
     serializer_class = VendorPickupPointSerializer
 
     def get(self, request):
-        vendor = getattr(request.user, "vendor_profile", None)
+        vendor = request.user.get_vendor_profile()
         if vendor is None:
             return error_response(
                 message="This account has no vendor profile.",
@@ -990,7 +990,7 @@ class VendorPickupPointListCreateView(GenericAPIView):
         )
 
     def post(self, request):
-        vendor = getattr(request.user, "vendor_profile", None)
+        vendor = request.user.get_vendor_profile()
         if vendor is None:
             return error_response(
                 message="This account has no vendor profile.",
@@ -1031,7 +1031,7 @@ class VendorPickupPointListCreateView(GenericAPIView):
     serializer_class = VendorPickupPointSerializer
 
     def get(self, request):
-        vendor = getattr(request.user, "vendor_profile", None)
+        vendor = request.user.get_vendor_profile()
         if vendor is None:
             return error_response(
                 message="This account has no vendor profile.",
@@ -1049,7 +1049,7 @@ class VendorPickupPointListCreateView(GenericAPIView):
         )
 
     def post(self, request):
-        vendor = getattr(request.user, "vendor_profile", None)
+        vendor = request.user.get_vendor_profile()
         if vendor is None:
             return error_response(
                 message="This account has no vendor profile.",
@@ -1087,7 +1087,7 @@ class VendorPickupPointDetailView(GenericAPIView):
     serializer_class = VendorPickupPointSerializer
 
     def get(self, request, point_id: int):
-        vendor = getattr(request.user, "vendor_profile", None)
+        vendor = request.user.get_vendor_profile()
         if vendor is None:
             return error_response(
                 message="This account has no vendor profile.",
@@ -1106,7 +1106,7 @@ class VendorPickupPointDetailView(GenericAPIView):
         )
 
     def patch(self, request, point_id: int):
-        vendor = getattr(request.user, "vendor_profile", None)
+        vendor = request.user.get_vendor_profile()
         if vendor is None:
             return error_response(
                 message="This account has no vendor profile.",
@@ -1141,7 +1141,7 @@ class VendorPickupPointDetailView(GenericAPIView):
         )
 
     def delete(self, request, point_id: int):
-        vendor = getattr(request.user, "vendor_profile", None)
+        vendor = request.user.get_vendor_profile()
         if vendor is None:
             return error_response(
                 message="This account has no vendor profile.",
@@ -1170,7 +1170,7 @@ class VendorListingActiveToggleView(GenericAPIView):
     serializer_class = VendorListingStatusSerializer
 
     def patch(self, request, listing_id: int):
-        vendor = getattr(request.user, "vendor_profile", None)
+        vendor = request.user.get_vendor_profile()
         if vendor is None:
             return error_response(
                 message="This account has no vendor profile.",

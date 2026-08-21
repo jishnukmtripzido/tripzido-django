@@ -1,5 +1,11 @@
 # apps/vendors/repositories.py
-from apps.vendors.models import SubscriptionPlan, Vendor, VendorCommission, VendorTerms
+from apps.vendors.models import (
+    SubscriptionPlan,
+    Vendor,
+    VendorCommission,
+    VendorDocument,
+    VendorTerms,
+)
 from decimal import Decimal
 from datetime import datetime, timedelta
 from django.db.models import Q, Sum

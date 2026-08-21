@@ -264,3 +264,9 @@ class VendorForgotPasswordResetSerializer(serializers.Serializer):
     new_password = serializers.CharField(
         write_only=True, trim_whitespace=False, min_length=8
     )
+
+
+class AdminStaffPasswordResetSerializer(serializers.Serializer):
+    new_password = serializers.CharField(
+        write_only=True, trim_whitespace=False, min_length=8
+    )

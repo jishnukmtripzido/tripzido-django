@@ -283,6 +283,22 @@ class User(AbstractBaseUser, PermissionsMixin, BaseModel):
             | models.Q(role__custom_name=role_name)
         ).exists()
 
+    def get_vendor_profile(self):
+        """
+        The ONE canonical way to resolve "which vendor does this login
+        belong to" — checks direct ownership (vendor_profile, the
+        OneToOneField) first, then team membership. Every vendor-scoped
+        view should call this instead of accessing user.vendor_profile
+        directly, so it also works correctly for a team member login,
+        not just the original owner account. Returns None if neither
+        applies (e.g. a customer or staff account).
+        """
+        owned = getattr(self, "vendor_profile", None)
+        if owned is not None:
+            return owned
+        membership = getattr(self, "vendor_team_membership", None)
+        return membership.vendor if membership is not None else None
+
 
 class UserRoleAssignment(BaseModel):
     """

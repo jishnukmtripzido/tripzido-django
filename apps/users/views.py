@@ -18,6 +18,7 @@ from apps.core.permissions import IsStaffRole
 from apps.core.pagination import CustomPagination
 from .services import UserService, AdminUserService
 from .serializers import (
+    AdminStaffPasswordResetSerializer,
     SendOTPSerializer,
     VendorForgotPasswordResetSerializer,
     VendorForgotPasswordSendOTPSerializer,
@@ -844,5 +845,46 @@ class VendorForgotPasswordResetView(APIView):
                 "access_token": str(refresh.access_token),
                 "refresh_token": str(refresh),
             },
+            status=status.HTTP_200_OK,
+        )
+
+
+class AdminStaffPasswordResetView(GenericAPIView):
+    """
+    PATCH /api/users/admin/staff/<int:user_id>/password/
+    Admin override — sets a staff member's password directly, no OTP
+    or current-password confirmation needed. Restricted to accounts
+    that actually hold SUPPORT/SUPER_ADMIN, so this can't be used to
+    reset an arbitrary customer's or vendor's password through the
+    same URL shape.
+    """
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+    serializer_class = AdminStaffPasswordResetSerializer
+
+    def patch(self, request, user_id: int):
+        serializer = AdminStaffPasswordResetSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid data",
+                errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user = User.objects.filter(id=user_id).first()
+        if user is None:
+            return error_response(
+                message="Staff member not found", status=status.HTTP_404_NOT_FOUND
+            )
+        if not (user.has_role("SUPPORT") or user.has_role("SUPER_ADMIN")):
+            return error_response(
+                message="Staff member not found", status=status.HTTP_404_NOT_FOUND
+            )
+
+        user.set_password(serializer.validated_data["new_password"])
+        user.save()
+        return success_response(
+            data=None,
+            message="Password updated successfully",
             status=status.HTTP_200_OK,
         )

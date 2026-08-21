@@ -17,6 +17,8 @@ from apps.vendors.serializers import (
     AdminVendorStatusUpdateSerializer,
     AdminVendorSubscriptionAssignSerializer,
     AdminVendorSubscriptionSerializer,
+    AdminVendorTeamMemberCreateSerializer,
+    AdminVendorTeamMemberSerializer,
     VendorTermsSerializer,
     VendorTermsUpdateSerializer,
     VendorDashboardSerializer,
@@ -29,6 +31,7 @@ from apps.vendors.services import (
     AdminVendorRegistrationService,
     AdminVendorService,
     AdminVendorSubscriptionService,
+    AdminVendorTeamService,
     VendorTermsService,
     VendorDashboardService,
 )
@@ -77,7 +80,7 @@ class VendorTermsManageView(GenericAPIView):
     serializer_class = VendorTermsSerializer
 
     def get(self, request):
-        vendor = getattr(request.user, "vendor_profile", None)
+        vendor = request.user.get_vendor_profile()
         if vendor is None:
             return error_response(
                 message="This account has no vendor profile.",
@@ -100,7 +103,7 @@ class VendorTermsManageView(GenericAPIView):
         )
 
     def post(self, request):
-        vendor = getattr(request.user, "vendor_profile", None)
+        vendor = request.user.get_vendor_profile()
         if vendor is None:
             return error_response(
                 message="This account has no vendor profile.",
@@ -131,7 +134,7 @@ class VendorDashboardView(GenericAPIView):
     serializer_class = VendorDashboardSerializer
 
     def get(self, request):
-        vendor = getattr(request.user, "vendor_profile", None)
+        vendor = request.user.get_vendor_profile()
         if vendor is None:
             return error_response(
                 message="This account has no vendor profile.",
@@ -552,4 +555,81 @@ class AdminVendorRegistrationView(GenericAPIView):
             data=output.data,
             message="Vendor registered successfully",
             status=status.HTTP_201_CREATED,
+        )
+
+
+class AdminVendorTeamView(GenericAPIView):
+    """
+    GET  /api/vendors/admin/vendors/<int:vendor_id>/team/
+    POST /api/vendors/admin/vendors/<int:vendor_id>/team/
+    """
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+    serializer_class = AdminVendorTeamMemberSerializer
+
+    def get(self, request, vendor_id: int):
+        members = AdminVendorTeamService.get_team(vendor_id)
+        data = [
+            {
+                "id": m.id,
+                "user_id": m.user_id,
+                "full_name": m.user.get_full_name(),
+                "phone_number": m.user.phone_number,
+                "email": m.user.email,
+                "added_at": m.created_at,
+                "added_by_name": m.added_by.get_full_name() if m.added_by else None,
+            }
+            for m in members
+        ]
+        serializer = self.get_serializer(data, many=True)
+        return success_response(
+            data=serializer.data,
+            message="Team members retrieved successfully",
+            status=status.HTTP_200_OK,
+        )
+
+    def post(self, request, vendor_id: int):
+        serializer = AdminVendorTeamMemberCreateSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid data",
+                errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        member, error = AdminVendorTeamService.add_team_member(
+            vendor_id, serializer.validated_data, request.user
+        )
+        if member is None:
+            return error_response(message=error, status=status.HTTP_400_BAD_REQUEST)
+        return success_response(
+            data={
+                "id": member.id,
+                "user_id": member.user_id,
+                "full_name": member.user.get_full_name(),
+                "phone_number": member.user.phone_number,
+                "email": member.user.email,
+                "added_at": member.created_at,
+                "added_by_name": request.user.get_full_name(),
+            },
+            message="Team member added successfully",
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class AdminVendorTeamMemberDetailView(GenericAPIView):
+    """DELETE /api/vendors/admin/team/<int:member_id>/"""
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+    serializer_class = AdminVendorTeamMemberSerializer
+
+    def delete(self, request, member_id: int):
+        deleted = AdminVendorTeamService.remove_team_member(member_id)
+        if not deleted:
+            return error_response(
+                message="Team member not found", status=status.HTTP_404_NOT_FOUND
+            )
+        return success_response(
+            data=None,
+            message="Team member removed successfully",
+            status=status.HTTP_204_NO_CONTENT,
         )

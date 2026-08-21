@@ -301,3 +301,24 @@ class AdminVendorRegistrationSerializer(serializers.Serializer):
     gst_number = serializers.CharField(
         max_length=20, required=False, allow_blank=True, default=""
     )
+
+
+class AdminVendorTeamMemberSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    user_id = serializers.IntegerField()
+    full_name = serializers.CharField()
+    phone_number = serializers.CharField()
+    email = serializers.CharField(allow_blank=True, allow_null=True)
+    added_at = serializers.DateTimeField()
+    added_by_name = serializers.CharField(allow_null=True)
+
+
+class AdminVendorTeamMemberCreateSerializer(serializers.Serializer):
+    phone_number = serializers.CharField(max_length=15)
+    phone_country_code = serializers.CharField(max_length=5, default="+91")
+    email = serializers.EmailField()
+    password = serializers.CharField(min_length=8, write_only=True)
+    first_name = serializers.CharField(max_length=50)
+    last_name = serializers.CharField(
+        max_length=50, required=False, allow_blank=True, default=""
+    )

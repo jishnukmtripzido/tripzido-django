@@ -420,7 +420,7 @@ class VendorBookingsView(GenericAPIView):
     pagination_class = CustomPagination
 
     def get(self, request):
-        vendor = getattr(request.user, "vendor_profile", None)
+        vendor = request.user.get_vendor_profile()
         if vendor is None:
             return error_response(
                 message="This account has no vendor profile.",
@@ -449,7 +449,7 @@ class VendorBookingDetailView(GenericAPIView):
     serializer_class = VendorBookingDetailSerializer
 
     def get(self, request, booking_id: int):
-        vendor = getattr(request.user, "vendor_profile", None)
+        vendor = request.user.get_vendor_profile()
         if vendor is None:
             return error_response(
                 message="This account has no vendor profile.",
@@ -479,7 +479,7 @@ class VendorBookingStatusUpdateView(GenericAPIView):
     serializer_class = VendorBookingStatusUpdateSerializer
 
     def patch(self, request, booking_id: int):
-        vendor = getattr(request.user, "vendor_profile", None)
+        vendor = request.user.get_vendor_profile()
         if vendor is None:
             return error_response(
                 message="This account has no vendor profile.",
@@ -515,7 +515,7 @@ class VendorCancelBookingView(GenericAPIView):
     serializer_class = VendorCancelBookingRequestSerializer
 
     def post(self, request, booking_id: int):
-        vendor = getattr(request.user, "vendor_profile", None)
+        vendor = request.user.get_vendor_profile()
         if vendor is None:
             return error_response(
                 message="This account has no vendor profile.",
@@ -554,15 +554,18 @@ class VendorCancelBookingView(GenericAPIView):
 
 
 class AdminCancelBookingView(GenericAPIView):
-    permission_classes = [IsAuthenticated]  # + your admin/staff permission class
+    permission_classes = [
+        IsAuthenticated,
+        IsStaffRole,
+    ]  # + your admin/staff permission class
     serializer_class = AdminCancelBookingRequestSerializer
 
     def post(self, request, booking_id: int):
-        # plug in your actual admin-role check here
-        if not request.user.is_staff:
-            return error_response(
-                message="Not authorized.", status=status.HTTP_403_FORBIDDEN
-            )
+        # # plug in your actual admin-role check here
+        # if not request.user.is_staff:
+        #     return error_response(
+        #         message="Not authorized.", status=status.HTTP_403_FORBIDDEN
+        #     )
 
         booking = Booking.objects.filter(id=booking_id).first()
         if booking is None:

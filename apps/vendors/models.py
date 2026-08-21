@@ -394,3 +394,43 @@ class VendorTerms(BaseModel):
 
     def __str__(self):
         return f"VendorTerms({self.vendor.business_name}) v{self.version}"
+
+
+class VendorTeamMember(BaseModel):
+    """
+    Links an ADDITIONAL user account to an existing vendor, letting
+    more than one person log into the vendor portal and manage the
+    same business. Vendor.user (the OneToOneField "owner" account)
+    stays completely untouched by this — every existing code path
+    keyed off vendor.user or user.vendor_profile keeps working
+    unchanged for owner accounts. This model exists purely to extend
+    who ELSE can act as that same vendor.
+
+    user is OneToOne — a login can be a team member of at most one
+    vendor, matching the same "one vendor identity per account"
+    assumption vendor.user already makes for owners. A user can never
+    simultaneously be an owner (vendor.user) AND a team member
+    (VendorTeamMember.user) — see User.get_vendor_profile() below,
+    which is the one place that resolves "which vendor, if any, does
+    this login belong to" across both cases.
+    """
+
+    vendor = models.ForeignKey(
+        Vendor, on_delete=models.CASCADE, related_name="team_members"
+    )
+    user = models.OneToOneField(
+        User, on_delete=models.CASCADE, related_name="vendor_team_membership"
+    )
+    added_by = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="vendor_team_members_added",
+    )
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.user.phone_number} — team member of {self.vendor.business_name}"

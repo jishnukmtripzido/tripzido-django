@@ -42,7 +42,7 @@ class VendorPayoutsView(GenericAPIView):
     pagination_class = CustomPagination
 
     def get(self, request):
-        vendor = getattr(request.user, "vendor_profile", None)
+        vendor = request.user.get_vendor_profile()
         if vendor is None:
             return error_response(
                 message="This account has no vendor profile.",
@@ -73,7 +73,7 @@ class VendorPayoutDetailView(GenericAPIView):
     serializer_class = VendorPayoutDetailSerializer
 
     def get(self, request, payout_id: int):
-        vendor = getattr(request.user, "vendor_profile", None)
+        vendor = request.user.get_vendor_profile()
         if vendor is None:
             return error_response(
                 message="This account has no vendor profile.",
