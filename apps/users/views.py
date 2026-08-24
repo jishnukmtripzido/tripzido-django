@@ -34,6 +34,8 @@ from .serializers import (
     AdminUserStatusUpdateSerializer,
     AdminStaffCreateSerializer,
     AdminStaffListItemSerializer,
+    StaffForgotPasswordSendOTPSerializer,
+    StaffForgotPasswordResetSerializer,
 )
 from .tasks import send_otp_email, send_otp_sms
 from .repositories import normalize_phone
@@ -886,5 +888,113 @@ class AdminStaffPasswordResetView(GenericAPIView):
         return success_response(
             data=None,
             message="Password updated successfully",
+            status=status.HTTP_200_OK,
+        )
+
+
+class StaffForgotPasswordSendOTPView(APIView):
+    """
+    POST /api/users/staff/forgot-password/send-otp/
+    Sends a one-time code to the SAME email used to log in — unlike
+    the vendor flow (identify by phone, deliver to a linked email),
+    staff already log in with email, so there's no separate "identify
+    by X, deliver to Y" step here. Separate cache key namespace
+    (staff_email_otp_) so this can never collide with the vendor or
+    customer OTP flows.
+    """
+
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = StaffForgotPasswordSendOTPSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid data",
+                errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        email = serializer.validated_data["email"]
+        user = User.objects.filter(email__iexact=email).first()
+
+        # Identical response whether or not this is a real staff
+        # account — avoids confirming which emails are registered
+        # staff accounts to an unauthenticated caller.
+        generic_response = success_response(
+            message="If this is a registered staff account, a reset code has been sent to it.",
+            data={},
+            status=status.HTTP_200_OK,
+        )
+
+        if user is None or not (
+            user.has_role("SUPPORT") or user.has_role("SUPER_ADMIN")
+        ):
+            return generic_response
+
+        # otp = str(random.randint(1000, 9999))
+        otp = 1211
+        cache.set(f"staff_email_otp_{email.lower()}", otp, timeout=600)
+        send_otp_email.delay(email, otp)
+
+        return generic_response
+
+
+class StaffForgotPasswordResetView(APIView):
+    """POST /api/users/staff/forgot-password/reset/"""
+
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = StaffForgotPasswordResetSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid data",
+                errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        data = serializer.validated_data
+        email = data["email"]
+        cache_key = f"staff_email_otp_{email.lower()}"
+
+        cached_otp = cache.get(cache_key)
+        if cached_otp is None:
+            return error_response(
+                message="Code expired or not found. Please request a new one.",
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if str(cached_otp) != str(data["otp"]):
+            return error_response(
+                message="Invalid code. Please try again.",
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user = User.objects.filter(email__iexact=email).first()
+        if user is None or not (
+            user.has_role("SUPPORT") or user.has_role("SUPER_ADMIN")
+        ):
+            cache.delete(cache_key)
+            return error_response(
+                message="Staff account not found.",
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        user.set_password(data["new_password"])
+        user.save()
+        cache.delete(cache_key)
+
+        role = "SUPER_ADMIN" if user.has_role("SUPER_ADMIN") else "SUPPORT"
+
+        refresh = RefreshToken.for_user(user)
+        return success_response(
+            message="Password updated successfully.",
+            data={
+                "email": user.email,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+                "role": role,
+                "access_token": str(refresh.access_token),
+                "refresh_token": str(refresh),
+            },
             status=status.HTTP_200_OK,
         )

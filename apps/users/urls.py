@@ -7,6 +7,8 @@ from apps.users.views import (
     ProfileView,
     RegisterSendOTPView,
     RegisterVerifyOTPView,
+    StaffForgotPasswordResetView,
+    StaffForgotPasswordSendOTPView,
     VendorForgotPasswordResetView,
     VendorForgotPasswordSendOTPView,
     VendorPasswordLoginView,
@@ -71,5 +73,15 @@ urlpatterns = [
         "admin/staff/<int:user_id>/password/",
         AdminStaffPasswordResetView.as_view(),
         name="admin-staff-password-reset",
+    ),
+    path(
+        "staff/forgot-password/send-otp/",
+        StaffForgotPasswordSendOTPView.as_view(),
+        name="staff-forgot-password-send-otp",
+    ),
+    path(
+        "staff/forgot-password/reset/",
+        StaffForgotPasswordResetView.as_view(),
+        name="staff-forgot-password-reset",
     ),
 ]
