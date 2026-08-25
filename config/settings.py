@@ -44,6 +44,8 @@ CORS_ALLOWED_ORIGINS = [
     "https://tripzido-next.vercel.app",
     "https://tripzido-partner.vercel.app",
     "https://tripzido-admin.vercel.app",
+    "https://localhost",
+    "capacitor://localhost",
 ]
 
 CORS_ALLOW_CREDENTIALS = True
@@ -57,6 +59,8 @@ CSRF_TRUSTED_ORIGINS = [
     "https://tripzido-next.vercel.app",
     "https://tripzido-partner.vercel.app",
     "https://tripzido-admin.vercel.app",
+    "https://localhost",
+    "capacitor://localhost",
 ]
 
 
