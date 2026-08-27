@@ -122,6 +122,17 @@ class Booking(BaseModel):
         max_digits=12, decimal_places=2, default=0
     )
 
+    verification_pin = models.CharField(
+        max_length=4,
+        blank=True,
+        default="",
+        help_text=(
+            "Random 4-digit PIN generated at booking time. Shown to the "
+            "customer while the booking is CONFIRMED; the vendor must enter "
+            "it correctly before the trip can be marked ONGOING."
+        ),
+    )
+
     tax_snapshot = models.JSONField(default=dict, blank=True)
 
     # T&C accepted at time of booking (snapshot of which version was accepted)

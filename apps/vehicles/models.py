@@ -548,8 +548,8 @@ class VehicleImage(BaseModel):
 
 class VehicleReview(BaseModel):
     """
-    Customer review for a completed booking.
-    One review per booking (enforced at model level).
+    Customer review container for a completed booking.
+    Enforces one review per booking at the database level.
     """
 
     class ModerationStatus(models.TextChoices):
@@ -558,20 +558,23 @@ class VehicleReview(BaseModel):
         REMOVED = "REMOVED", "Removed by Admin"
         FLAGGED = "FLAGGED", "Flagged for Review"
 
-    booking = models.ForeignKey(
-        "bookings.Booking", on_delete=models.CASCADE, related_name="reviews"
+    booking = models.OneToOneField(
+        "bookings.Booking",
+        on_delete=models.CASCADE,
+        related_name="review",
     )
     customer = models.ForeignKey(
-        User, on_delete=models.CASCADE, related_name="reviews_given"
+        User,
+        on_delete=models.CASCADE,
+        related_name="reviews_given",
     )
     listing = models.ForeignKey(
-        VehicleListing, on_delete=models.CASCADE, related_name="reviews"
+        "vehicles.VehicleListing",
+        on_delete=models.CASCADE,
+        related_name="reviews",
     )
 
-    rating = models.PositiveSmallIntegerField(
-        validators=[MinValueValidator(1), MaxValueValidator(5)]
-    )
-    review_text = models.TextField(blank=True)
+    review_text = models.TextField(blank=True, default="")
 
     moderation_status = models.CharField(
         max_length=20,
@@ -591,5 +594,65 @@ class VehicleReview(BaseModel):
     class Meta:
         ordering = ["-created_at"]
 
+    def save(self, *args, **kwargs):
+        # Auto-approve rating-only submissions if no text requires moderation
+        if (
+            not self.review_text.strip()
+            and self.moderation_status == self.ModerationStatus.PENDING
+        ):
+            self.moderation_status = self.ModerationStatus.APPROVED
+        super().save(*args, **kwargs)
+
+    @property
+    def average_rating(self):
+        """Calculates dynamic overall average rating from sub-ratings."""
+        ratings = self.ratings.all()
+        if not ratings.exists():
+            return None
+        return round(sum(r.score for r in ratings) / ratings.count(), 2)
+
     def __str__(self):
-        return f"Review(booking={self.booking_id}) {self.rating}★"
+        return f"Review(booking={self.booking_id}) - Customer: {self.customer_id}"
+
+
+class ReviewRating(BaseModel):
+    """
+    Individual sub-criterion rating for a review (e.g. Cleanliness, Vendor Behavior).
+    """
+
+    class Criterion(models.TextChoices):
+        # Vehicle Specific
+        VEHICLE_CONDITION = "VEHICLE_CONDITION", "Vehicle & Mechanical Condition"
+        CLEANLINESS = "CLEANLINESS", "Cleanliness & Hygiene"
+        # Vendor Specific
+        VENDOR_BEHAVIOR = "VENDOR_BEHAVIOR", "Vendor Communication & Behavior"
+        HANDOVER_PROCESS = "HANDOVER_PROCESS", "Pickup & Return Experience"
+        # Platform/General
+        VALUE_FOR_MONEY = "VALUE_FOR_MONEY", "Value for Money"
+
+    review = models.ForeignKey(
+        VehicleReview,
+        on_delete=models.CASCADE,
+        related_name="ratings",
+    )
+    criterion = models.CharField(
+        max_length=32,
+        choices=Criterion.choices,
+    )
+    score = models.PositiveSmallIntegerField(
+        validators=[MinValueValidator(1), MaxValueValidator(5)]
+    )
+
+    class Meta:
+        # Prevents duplicate rating entries for the same criterion on a single review
+        constraints = [
+            models.UniqueConstraint(
+                fields=["review", "criterion"],
+                name="unique_criterion_per_review",
+            )
+        ]
+
+    def __str__(self):
+        return (
+            f"{self.get_criterion_display()}: {self.score}★ (Review #{self.review_id})"
+        )

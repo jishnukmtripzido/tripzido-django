@@ -35,6 +35,10 @@ from apps.vehicles.serializers import (
     VendorListingUpdateSerializer,
     AdminVehicleTypeSerializer,
     AdminPackageCategorySerializer,
+    RatingBreakdownItemSerializer,
+    AdminReviewListSerializer,
+    AdminReviewDetailSerializer,
+    AdminReviewStatusUpdateSerializer,
 )
 from apps.vehicles.models import Brand, PricingPackageType, VehicleType, PackageCategory
 from django.db.models import Q
@@ -43,6 +47,7 @@ from apps.vehicles.services import (
     VehicleSearchService,
     VehicleReviewService,
     VehicleReviewService,
+    AdminReviewService,
     VehicleDetailService,
     LocationTimingService,
     VendorFleetService,
@@ -57,6 +62,7 @@ from apps.vehicles.services import (
     VendorPickupPointService,
     AdminListingService,
 )
+from apps.vehicles.repositories import AdminReviewRepository
 from apps.core.responses import success_response, error_response
 from drf_spectacular.utils import extend_schema, OpenApiParameter
 from drf_spectacular.types import OpenApiTypes
@@ -251,9 +257,12 @@ class VehicleReviewsView(GenericAPIView):
 
             response_data = {
                 "average_rating": data["average_rating"],
+                "total_reviews": data["total_count"],
+                "rating_breakdown": RatingBreakdownItemSerializer(
+                    data["rating_breakdown"], many=True
+                ).data,
                 **paginated_response.data,  # adds "pagination" and "results"
             }
-
             return success_response(
                 data=response_data,
                 message="Reviews retrieved successfully",
@@ -1621,4 +1630,90 @@ class AdminPricingPackageTypeDetailView(GenericAPIView):
             data=None,
             message="Package type deleted successfully",
             status=status.HTTP_204_NO_CONTENT,
+        )
+
+
+class AdminReviewListView(GenericAPIView):
+    """GET /api/vehicles/admin/reviews/?status=&vendor_id=&search=&page="""
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+    serializer_class = AdminReviewListSerializer
+    pagination_class = CustomPagination
+
+    def get(self, request):
+        status_filter = request.query_params.get("status")
+        vendor_id = request.query_params.get("vendor_id")
+        search = request.query_params.get("search")
+        queryset = AdminReviewService.get_all(
+            status_filter, int(vendor_id) if vendor_id else None, search
+        )
+        page = self.paginate_queryset(queryset)
+        serializer = self.get_serializer(page, many=True)
+        paginated_response = self.get_paginated_response(serializer.data)
+        return success_response(
+            data=paginated_response.data,
+            message="Reviews retrieved successfully",
+            status=status.HTTP_200_OK,
+        )
+
+
+class AdminReviewDetailView(GenericAPIView):
+    """GET/DELETE /api/vehicles/admin/reviews/<int:review_id>/"""
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+    serializer_class = AdminReviewDetailSerializer
+
+    def get(self, request, review_id: int):
+        review = AdminReviewRepository.get_by_id(review_id)
+        if review is None:
+            return error_response(
+                message="Review not found", status=status.HTTP_404_NOT_FOUND
+            )
+        serializer = self.get_serializer(review)
+        return success_response(
+            data=serializer.data,
+            message="Review retrieved successfully",
+            status=status.HTTP_200_OK,
+        )
+
+    def delete(self, request, review_id: int):
+        deleted = AdminReviewService.delete_review(review_id)
+        if not deleted:
+            return error_response(
+                message="Review not found", status=status.HTTP_404_NOT_FOUND
+            )
+        return success_response(
+            data=None,
+            message="Review deleted successfully",
+            status=status.HTTP_204_NO_CONTENT,
+        )
+
+
+class AdminReviewStatusUpdateView(GenericAPIView):
+    """PATCH /api/vehicles/admin/reviews/<int:review_id>/status/"""
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+    serializer_class = AdminReviewStatusUpdateSerializer
+
+    def patch(self, request, review_id: int):
+        serializer = AdminReviewStatusUpdateSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid data",
+                errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        review, error = AdminReviewService.update_status(
+            review_id,
+            serializer.validated_data["moderation_status"],
+            request.user,
+            serializer.validated_data.get("moderation_note", ""),
+        )
+        if review is None:
+            return error_response(message=error, status=status.HTTP_404_NOT_FOUND)
+        output = AdminReviewDetailSerializer(review)
+        return success_response(
+            data=output.data,
+            message="Review status updated successfully",
+            status=status.HTTP_200_OK,
         )

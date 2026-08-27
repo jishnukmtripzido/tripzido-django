@@ -15,6 +15,8 @@ from apps.vehicles.models import (
     PricingPackageType,
     ListingBlockedPeriod,
     VendorPickupPoint,
+    ReviewRating,
+    VehicleReview,
 )
 from apps.vehicles.utils import format_duration
 
@@ -313,13 +315,31 @@ class VehicleDetailSerializer(serializers.Serializer):
     availability_checked = serializers.BooleanField()
 
 
+class RatingBreakdownItemSerializer(serializers.Serializer):
+    criterion = serializers.CharField()
+    criterion_label = serializers.CharField()
+    average_score = serializers.FloatField()
+    count = serializers.IntegerField()
+
+
+class ReviewRatingItemSerializer(serializers.Serializer):
+    criterion = serializers.CharField()
+    criterion_label = serializers.CharField()
+    score = serializers.IntegerField()
+
+
 class VehicleReviewItemSerializer(serializers.Serializer):
     id = serializers.IntegerField()
     author_name = serializers.SerializerMethodField()
-    rating = serializers.IntegerField()
+    rating = (
+        serializers.SerializerMethodField()
+    )  # was a broken IntegerField(source="rating")
     comment = serializers.CharField(source="review_text")
     created_at = serializers.DateTimeField()
     vehicle_name = serializers.SerializerMethodField()
+    ratings = (
+        serializers.SerializerMethodField()
+    )  # NEW — per-criterion scores for this review
 
     def get_author_name(self, review):
         customer = review.customer
@@ -337,8 +357,22 @@ class VehicleReviewItemSerializer(serializers.Serializer):
             return f"{first} {last[0]}."
         return first or last
 
+    def get_rating(self, review):
+        avg = review.average_rating  # model property, reads the prefetched "ratings"
+        return round(avg, 1) if avg is not None else None
+
     def get_vehicle_name(self, review):
         return review.listing.vehicle_type.name
+
+    def get_ratings(self, review):
+        return [
+            {
+                "criterion": r.criterion,
+                "criterion_label": r.get_criterion_display(),
+                "score": r.score,
+            }
+            for r in review.ratings.all()  # prefetched — no extra query
+        ]
 
 
 class CheckoutSummaryQuerySerializer(serializers.Serializer):
@@ -965,3 +999,116 @@ class AdminPricingPackageTypeSerializer(serializers.ModelSerializer):
             "duration_hours",
             "sort_order",
         ]
+
+
+# ── Reviews ──────────────────────────────────────────────────────────
+
+
+class ReviewRatingInputSerializer(serializers.Serializer):
+    criterion = serializers.ChoiceField(choices=ReviewRating.Criterion.choices)
+    score = serializers.IntegerField(min_value=1, max_value=5)
+
+
+class BookingReviewSubmitSerializer(serializers.Serializer):
+    review_text = serializers.CharField(required=False, allow_blank=True, default="")
+    ratings = ReviewRatingInputSerializer(many=True)
+
+    def validate_ratings(self, value):
+        if not value:
+            raise serializers.ValidationError("Provide at least one rating.")
+        criteria = [r["criterion"] for r in value]
+        if len(criteria) != len(set(criteria)):
+            raise serializers.ValidationError("Duplicate criterion in ratings.")
+        return value
+
+
+class BookingReviewDetailSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    review_text = serializers.CharField(allow_blank=True)
+    moderation_status = serializers.CharField()
+    created_at = serializers.DateTimeField()
+    ratings = serializers.SerializerMethodField()
+
+    def get_ratings(self, review):
+        return [
+            {
+                "criterion": r.criterion,
+                "criterion_label": r.get_criterion_display(),
+                "score": r.score,
+            }
+            for r in review.ratings.all()
+        ]
+
+
+class AdminReviewListSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    booking_id = serializers.IntegerField()
+    customer_name = serializers.SerializerMethodField()
+    vehicle_name = serializers.SerializerMethodField()
+    vendor_name = serializers.CharField(source="listing.vendor.business_name")
+    review_text = serializers.CharField(allow_blank=True)
+    average_rating = serializers.FloatField(allow_null=True)
+    moderation_status = serializers.CharField()
+    moderation_status_label = serializers.CharField(
+        source="get_moderation_status_display"
+    )
+    created_at = serializers.DateTimeField()
+
+    def get_customer_name(self, obj):
+        c = obj.customer
+        return f"{c.first_name} {c.last_name or ''}".strip() or c.phone_number
+
+    def get_vehicle_name(self, obj):
+        vt = obj.listing.vehicle_type
+        return f"{vt.brand.name} {vt.name}"
+
+
+class AdminReviewDetailSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    booking_id = serializers.IntegerField()
+    booking_reference = serializers.CharField(source="booking.booking_reference")
+    customer_name = serializers.SerializerMethodField()
+    customer_phone = serializers.CharField(source="customer.phone_number")
+    vehicle_name = serializers.SerializerMethodField()
+    vendor_name = serializers.CharField(source="listing.vendor.business_name")
+    review_text = serializers.CharField(allow_blank=True)
+    average_rating = serializers.FloatField(allow_null=True)
+    ratings = serializers.SerializerMethodField()
+    moderation_status = serializers.CharField()
+    moderation_status_label = serializers.CharField(
+        source="get_moderation_status_display"
+    )
+    moderation_note = serializers.CharField(allow_blank=True)
+    moderated_by_name = serializers.SerializerMethodField()
+    moderated_at = serializers.DateTimeField(allow_null=True)
+    created_at = serializers.DateTimeField()
+
+    def get_customer_name(self, obj):
+        c = obj.customer
+        return f"{c.first_name} {c.last_name or ''}".strip() or c.phone_number
+
+    def get_vehicle_name(self, obj):
+        vt = obj.listing.vehicle_type
+        return f"{vt.brand.name} {vt.name}"
+
+    def get_ratings(self, obj):
+        return [
+            {
+                "criterion": r.criterion,
+                "criterion_label": r.get_criterion_display(),
+                "score": r.score,
+            }
+            for r in obj.ratings.all()
+        ]
+
+    def get_moderated_by_name(self, obj):
+        return obj.moderated_by.get_full_name() if obj.moderated_by else None
+
+
+class AdminReviewStatusUpdateSerializer(serializers.Serializer):
+    moderation_status = serializers.ChoiceField(
+        choices=VehicleReview.ModerationStatus.choices
+    )
+    moderation_note = serializers.CharField(
+        required=False, allow_blank=True, default=""
+    )

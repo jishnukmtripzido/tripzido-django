@@ -36,6 +36,8 @@ from apps.bookings.serializers import (
     VendorBookingDetailSerializer,
     VendorBookingStatusUpdateSerializer,
     VendorCancelBookingRequestSerializer,
+    BookingReviewSubmitSerializer,  # NEW
+    BookingReviewDetailSerializer,
 )
 from apps.bookings.services import (
     BookingCheckoutService,
@@ -43,6 +45,7 @@ from apps.bookings.services import (
     CancellationService,
     InvoiceService,
     VendorBookingService,
+    BookingReviewService,
 )
 from apps.bookings.repositories import BookingRepository
 from apps.bookings.signature import verify_cashfree_signature
@@ -495,7 +498,11 @@ class VendorBookingStatusUpdateView(GenericAPIView):
             )
 
         booking, error = VendorBookingService.update_status(
-            booking_id, vendor.id, serializer.validated_data["status"], request.user
+            booking_id,
+            vendor.id,
+            serializer.validated_data["status"],
+            request.user,
+            verification_pin=serializer.validated_data.get("verification_pin", ""),
         )
         if booking is None:
             return error_response(message=error, status=status.HTTP_400_BAD_REQUEST)
@@ -690,3 +697,119 @@ class BookingInvoiceView(GenericAPIView):
             f'attachment; filename="invoice-{booking.booking_reference}.pdf"'
         )
         return response
+
+
+class BookingReviewView(GenericAPIView):
+    """
+    GET    /api/bookings/{id}/review/  — this customer's review for this booking, or null
+    POST   /api/bookings/{id}/review/  — create one (booking must be COMPLETED, one per booking)
+    PATCH  /api/bookings/{id}/review/  — edit the existing one
+
+    Ownership + existence enforced by BookingQueryService.get_booking_detail,
+    same scoping every other endpoint on this resource already relies on.
+    """
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = BookingReviewSubmitSerializer
+
+    def get(self, request, booking_id: int):
+        review, error = BookingReviewService.get_existing_review(
+            booking_id, request.user
+        )
+        if error == "not_found":
+            return error_response(
+                message="Booking not found", status=status.HTTP_404_NOT_FOUND
+            )
+        if review is None:
+            return success_response(
+                data=None, message="No review yet", status=status.HTTP_200_OK
+            )
+
+        serializer = BookingReviewDetailSerializer(review)
+        return success_response(
+            data=serializer.data,
+            message="Review retrieved successfully",
+            status=status.HTTP_200_OK,
+        )
+
+    def post(self, request, booking_id: int):
+        serializer = BookingReviewSubmitSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid review data",
+                errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        ratings = {
+            r["criterion"]: r["score"] for r in serializer.validated_data["ratings"]
+        }
+        review, error = BookingReviewService.submit_review(
+            booking_id,
+            request.user,
+            serializer.validated_data["review_text"],
+            ratings,
+        )
+        if error == "not_found":
+            return error_response(
+                message="Booking not found", status=status.HTTP_404_NOT_FOUND
+            )
+        if error == "not_completed":
+            return error_response(
+                message="You can only review a completed booking.",
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if error == "already_reviewed":
+            return error_response(
+                message="You've already reviewed this booking.",
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        output = BookingReviewDetailSerializer(review)
+        return success_response(
+            data=output.data,
+            message="Review submitted successfully",
+            status=status.HTTP_201_CREATED,
+        )
+
+    def patch(self, request, booking_id: int):
+        serializer = BookingReviewSubmitSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid review data",
+                errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        ratings = {
+            r["criterion"]: r["score"] for r in serializer.validated_data["ratings"]
+        }
+        review, error = BookingReviewService.update_review(
+            booking_id,
+            request.user,
+            serializer.validated_data["review_text"],
+            ratings,
+        )
+        if error == "not_found":
+            return error_response(
+                message="Review not found", status=status.HTTP_404_NOT_FOUND
+            )
+
+        output = BookingReviewDetailSerializer(review)
+        return success_response(
+            data=output.data,
+            message="Review updated successfully",
+            status=status.HTTP_200_OK,
+        )
+
+    def delete(self, request, booking_id: int):
+        deleted, error = BookingReviewService.delete_review(booking_id, request.user)
+        if error == "not_found":
+            return error_response(
+                message="Review not found", status=status.HTTP_404_NOT_FOUND
+            )
+        return success_response(
+            data=None,
+            message="Review deleted successfully",
+            status=status.HTTP_204_NO_CONTENT,
+        )

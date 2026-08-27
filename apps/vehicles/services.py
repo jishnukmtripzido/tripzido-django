@@ -15,6 +15,7 @@ from apps.vehicles.repositories import (
     ScheduleTemplateRepository,
     VendorBlockedPeriodRepository,
     VendorPickupPointRepository,
+    AdminReviewRepository,
 )
 from django.db import transaction
 from django.core.exceptions import ValidationError
@@ -783,11 +784,15 @@ class VehicleReviewService:
 
         aggregates = VehicleReviewRepository.get_rating_aggregates(listing_id)
         average_rating = aggregates["average_rating"] or 0
+        total_count = aggregates["total_count"]
 
+        rating_breakdown = VehicleReviewRepository.get_criterion_breakdown(listing_id)
         reviews_queryset = VehicleReviewRepository.get_approved_reviews(listing_id)
 
         return {
             "average_rating": round(float(average_rating), 1),
+            "total_count": total_count,
+            "rating_breakdown": rating_breakdown,
             "reviews_queryset": reviews_queryset,
         }
 
@@ -1531,3 +1536,37 @@ class AdminListingService:
             "suspended_at": listing.suspended_at,
             "created_at": listing.created_at,
         }
+
+
+class AdminReviewService:
+
+    @staticmethod
+    def get_all(status_filter=None, vendor_id=None, search=None):
+        return AdminReviewRepository.get_all(status_filter, vendor_id, search)
+
+    @staticmethod
+    def update_status(review_id: int, target_status: str, admin_user, note: str = ""):
+        review = AdminReviewRepository.get_by_id(review_id)
+        if review is None:
+            return None, "Review not found"
+
+        review.moderation_status = target_status
+        review.moderation_note = note
+        review.moderated_by = admin_user
+        review.moderated_at = timezone.now()
+        review.save(
+            update_fields=[
+                "moderation_status",
+                "moderation_note",
+                "moderated_by",
+                "moderated_at",
+            ]
+        )
+        return review, None
+
+    @staticmethod
+    def delete_review(review_id: int) -> bool:
+        from apps.vehicles.models import VehicleReview
+
+        deleted, _ = VehicleReview.objects.filter(id=review_id).delete()
+        return deleted > 0

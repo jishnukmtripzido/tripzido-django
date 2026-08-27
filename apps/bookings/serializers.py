@@ -4,6 +4,7 @@ from rest_framework import serializers
 from apps.bookings.models import Booking, BookingCancellation
 from apps.payments.models import Payment
 from apps.vendors.models import VendorTerms
+from apps.vehicles.models import ReviewRating
 
 # ── List view (BookingsList.tsx card) ──────────────────────────────────
 
@@ -233,6 +234,7 @@ class BookingDetailSerializer(serializers.ModelSerializer):
 
     can_cancel = serializers.SerializerMethodField()
     cancellation = serializers.SerializerMethodField()
+    verification_pin = serializers.SerializerMethodField()
 
     class Meta:
         model = Booking
@@ -240,6 +242,7 @@ class BookingDetailSerializer(serializers.ModelSerializer):
             "id",
             "booking_reference",
             "vehicle_name",
+            "verification_pin",
             "vehicle_image",
             "transmission_type",
             "fuel_type",
@@ -379,6 +382,13 @@ class BookingDetailSerializer(serializers.ModelSerializer):
         if point is None:
             return None
         return BookingPickupPointSerializer(point).data
+
+    def get_verification_pin(self, booking):
+        # Only meaningful before the trip has started — once ONGOING
+        # or beyond, there's nothing left to verify, so it disappears.
+        if booking.status != Booking.Status.CONFIRMED:
+            return None
+        return booking.verification_pin
 
 
 # ── Confirmation view (post-checkout) ───────────────────────────────────
@@ -670,6 +680,9 @@ class VendorBookingDetailSerializer(serializers.ModelSerializer):
 
 class VendorBookingStatusUpdateSerializer(serializers.Serializer):
     status = serializers.ChoiceField(choices=Booking.Status.choices)
+    verification_pin = serializers.CharField(
+        required=False, allow_blank=True, default=""
+    )
 
 
 class VendorCancelBookingRequestSerializer(serializers.Serializer):
@@ -884,3 +897,42 @@ class BookingPickupPointSerializer(serializers.Serializer):
     latitude = serializers.FloatField(allow_null=True)
     longitude = serializers.FloatField(allow_null=True)
     google_maps_link = serializers.CharField(allow_blank=True)
+
+
+# ── Reviews ──────────────────────────────────────────────────────────
+
+
+class ReviewRatingInputSerializer(serializers.Serializer):
+    criterion = serializers.ChoiceField(choices=ReviewRating.Criterion.choices)
+    score = serializers.IntegerField(min_value=1, max_value=5)
+
+
+class BookingReviewSubmitSerializer(serializers.Serializer):
+    review_text = serializers.CharField(required=False, allow_blank=True, default="")
+    ratings = ReviewRatingInputSerializer(many=True)
+
+    def validate_ratings(self, value):
+        if not value:
+            raise serializers.ValidationError("Provide at least one rating.")
+        criteria = [r["criterion"] for r in value]
+        if len(criteria) != len(set(criteria)):
+            raise serializers.ValidationError("Duplicate criterion in ratings.")
+        return value
+
+
+class BookingReviewDetailSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    review_text = serializers.CharField(allow_blank=True)
+    moderation_status = serializers.CharField()
+    created_at = serializers.DateTimeField()
+    ratings = serializers.SerializerMethodField()
+
+    def get_ratings(self, review):
+        return [
+            {
+                "criterion": r.criterion,
+                "criterion_label": r.get_criterion_display(),
+                "score": r.score,
+            }
+            for r in review.ratings.all()
+        ]

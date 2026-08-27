@@ -16,6 +16,7 @@ from apps.vehicles.models import (
     TemplateScheduleDay,
     ListingBlockedPeriod,
     VehicleReview,
+    ReviewRating,
 )
 
 
@@ -167,19 +168,31 @@ class ListingBlockedPeriodAdmin(SoftDeleteAdmin):
     readonly_fields = ("is_deleted_display",)
 
 
+class ReviewRatingInline(admin.TabularInline):
+    model = ReviewRating
+    extra = 0
+    min_num = 0
+
+
 @admin.register(VehicleReview)
 class VehicleReviewAdmin(SoftDeleteAdmin):
+    inlines = [ReviewRatingInline]
+
     list_display = (
         "id",
         "listing",
         "customer",
-        "rating",
+        "average_rating_display",
         "moderation_status",
         "created_at",
         "moderated_by",
         "is_deleted_display",
     )
-    list_filter = ("moderation_status", "rating", "listing__pickup_location__city")
+    list_filter = (
+        "moderation_status",
+        "ratings__criterion",
+        "listing__pickup_location__city",
+    )
     search_fields = (
         "listing__vehicle_type__name",
         "customer__phone_number",
@@ -188,6 +201,7 @@ class VehicleReviewAdmin(SoftDeleteAdmin):
         "review_text",
     )
     readonly_fields = (
+        "average_rating_display",
         "created_at",
         "is_deleted_display",
     )
@@ -195,7 +209,7 @@ class VehicleReviewAdmin(SoftDeleteAdmin):
         "booking",
         "customer",
         "listing",
-        "rating",
+        "average_rating_display",
         "review_text",
         "moderation_status",
         "moderation_note",
@@ -205,6 +219,11 @@ class VehicleReviewAdmin(SoftDeleteAdmin):
         "is_deleted_display",
     )
     actions = ["approve_reviews", "remove_reviews", "flag_reviews"]
+
+    @admin.display(description="Avg Rating")
+    def average_rating_display(self, obj):
+        avg = obj.average_rating
+        return f"{avg} ★" if avg is not None else "—"
 
     def _set_moderation_status(self, request, queryset, status_value, status_label):
         updated = queryset.update(

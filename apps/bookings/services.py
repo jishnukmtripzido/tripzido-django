@@ -1,3 +1,4 @@
+import random
 import uuid
 import secrets
 from decimal import Decimal
@@ -7,7 +8,7 @@ from datetime import timedelta
 from apps.bookings.models import Booking, BookingCancellation
 from apps.payments.models import Payment, RefundRecord
 from apps.bookings.cashfree_client import CashfreeClient
-from apps.vehicles.repositories import VehicleDetailRepository
+from apps.vehicles.repositories import VehicleDetailRepository, BookingReviewRepository
 from apps.vehicles.services import AvailabilityService, VehicleDetailService
 from django.conf import settings
 from apps.bookings.models import Booking
@@ -59,6 +60,10 @@ def _generate_unique_booking_reference(max_attempts: int = 5) -> str:
 
 def _generate_order_id() -> str:
     return "bk_" + uuid.uuid4().hex[:20]
+
+
+def _generate_verification_pin() -> str:
+    return str(random.randint(0, 9999)).zfill(4)
 
 
 class BookingCheckoutService:
@@ -248,6 +253,7 @@ class BookingCheckoutService:
             booking = Booking.objects.create(
                 booking_group_id=group_id,
                 booking_reference=_generate_unique_booking_reference(),
+                verification_pin=_generate_verification_pin(),
                 customer=customer,
                 listing=listing,
                 pickup_location=listing.pickup_location,
@@ -974,7 +980,11 @@ class VendorBookingService:
     @staticmethod
     @transaction.atomic
     def update_status(
-        booking_id: int, vendor_id: int, new_status: str, changed_by_user
+        booking_id: int,
+        vendor_id: int,
+        new_status: str,
+        changed_by_user,
+        verification_pin: str = "",
     ):
         """
         Returns (booking, None) on success, or (None, error_message).
@@ -998,6 +1008,13 @@ class VendorBookingService:
                 f"Cannot change status from '{booking.get_status_display()}' to "
                 f"'{new_status}'."
             )
+
+        if new_status == Booking.Status.ONGOING:
+            if verification_pin.strip() != booking.verification_pin:
+                return None, (
+                    "Incorrect verification PIN. Ask the customer for the "
+                    "correct 4-digit PIN before starting the trip."
+                )
 
         now = timezone.now()
         if new_status == Booking.Status.ONGOING:
@@ -1052,3 +1069,74 @@ class InvoiceService:
         }
         html_string = render_to_string("bookings/invoice.html", context)
         return HTML(string=html_string).write_pdf()
+
+
+class BookingReviewService:
+    """
+    Reviews are always scoped to one specific booking — the customer is
+    reviewing "this vehicle, from this vendor, on this trip", not the
+    vehicle type in the abstract. Ownership/existence is delegated to
+    BookingQueryService.get_booking_detail, the same customer-scoped
+    lookup every other booking endpoint on this resource already uses,
+    rather than a separate check re-implemented here.
+    """
+
+    @staticmethod
+    def get_existing_review(booking_id: int, customer):
+        booking = BookingQueryService.get_booking_detail(booking_id, customer)
+        if booking is None:
+            return None, "not_found"
+        return BookingReviewRepository.get_for_booking(booking.id, customer.id), None
+
+    @staticmethod
+    def submit_review(
+        booking_id: int, customer, review_text: str, ratings: dict[str, int]
+    ):
+        booking = BookingQueryService.get_booking_detail(booking_id, customer)
+        if booking is None:
+            return None, "not_found"
+
+        if booking.status != Booking.Status.COMPLETED:
+            return None, "not_completed"
+
+        if BookingReviewRepository.get_for_booking(booking.id, customer.id) is not None:
+            return None, "already_reviewed"
+
+        review = BookingReviewRepository.create_review(
+            booking=booking,
+            customer=customer,
+            listing=booking.listing,
+            review_text=review_text,
+            ratings=ratings,
+        )
+        return review, None
+
+    @staticmethod
+    def update_review(
+        booking_id: int, customer, review_text: str, ratings: dict[str, int]
+    ):
+        booking = BookingQueryService.get_booking_detail(booking_id, customer)
+        if booking is None:
+            return None, "not_found"
+
+        existing = BookingReviewRepository.get_for_booking(booking.id, customer.id)
+        if existing is None:
+            return None, "not_found"
+
+        return (
+            BookingReviewRepository.update_review(existing, review_text, ratings),
+            None,
+        )
+
+    @staticmethod
+    def delete_review(booking_id: int, customer):
+        booking = BookingQueryService.get_booking_detail(booking_id, customer)
+        if booking is None:
+            return False, "not_found"
+
+        existing = BookingReviewRepository.get_for_booking(booking.id, customer.id)
+        if existing is None:
+            return False, "not_found"
+
+        BookingReviewRepository.delete_review(existing)
+        return True, None

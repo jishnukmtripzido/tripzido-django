@@ -12,6 +12,7 @@ from apps.vehicles.models import (
     PricingPackageType,
     VendorPickupPoint,
     Brand,
+    ReviewRating,
 )
 from apps.vendors.models import Vendor, VendorTerms, VendorSubscription
 from django.utils import timezone
@@ -424,11 +425,55 @@ class VehicleReviewRepository:
 
     @staticmethod
     def get_rating_aggregates(listing_id: int) -> dict:
-        """Average rating + count of approved reviews for a listing."""
-        return VehicleReview.objects.filter(
+        """
+        Average rating + count of approved reviews for a listing.
+
+        VehicleReview has no `rating` field of its own — the real score
+        lives in ReviewRating (one row per criterion per review). This
+        averages every individual criterion score across all approved
+        reviews for the listing, so a review that only rated 2 criteria
+        doesn't get the same weight as one that rated all 5.
+        """
+        total_count = VehicleReview.objects.filter(
             listing_id=listing_id,
             moderation_status=VehicleReview.ModerationStatus.APPROVED,
-        ).aggregate(average_rating=Avg("rating"), total_count=Count("id"))
+        ).count()
+
+        avg = ReviewRating.objects.filter(
+            review__listing_id=listing_id,
+            review__moderation_status=VehicleReview.ModerationStatus.APPROVED,
+        ).aggregate(average_rating=Avg("score"))["average_rating"]
+
+        return {"average_rating": avg, "total_count": total_count}
+
+    @staticmethod
+    def get_criterion_breakdown(listing_id: int) -> list[dict]:
+        """
+        Average score per rating criterion across approved reviews for
+        this listing — powers the rating-breakdown bars on the summary.
+        Criteria nobody has rated yet are omitted rather than shown as 0.
+        """
+        rows = (
+            ReviewRating.objects.filter(
+                review__listing_id=listing_id,
+                review__moderation_status=VehicleReview.ModerationStatus.APPROVED,
+            )
+            .values("criterion")
+            .annotate(average_score=Avg("score"), count=Count("id"))
+            .order_by("criterion")
+        )
+        criterion_labels = dict(ReviewRating.Criterion.choices)
+        return [
+            {
+                "criterion": row["criterion"],
+                "criterion_label": criterion_labels.get(
+                    row["criterion"], row["criterion"]
+                ),
+                "average_score": round(row["average_score"], 1),
+                "count": row["count"],
+            }
+            for row in rows
+        ]
 
     @staticmethod
     def get_approved_reviews(listing_id: int, limit: int | None = None):
@@ -439,6 +484,9 @@ class VehicleReviewRepository:
                 moderation_status=VehicleReview.ModerationStatus.APPROVED,
             )
             .select_related("customer", "listing__vehicle_type")
+            .prefetch_related(
+                "ratings"
+            )  # NEW — feeds average_rating property + per-criterion display, no N+1
             .order_by("-created_at")
         )
         if limit is not None:
@@ -1026,5 +1074,99 @@ class AdminListingRepository:
                     to_attr="ordered_days",
                 ),
             )
+            .first()
+        )
+
+
+class BookingReviewRepository:
+
+    @staticmethod
+    def get_for_booking(booking_id: int, customer_id: int):
+        return (
+            VehicleReview.objects.filter(booking_id=booking_id, customer_id=customer_id)
+            .prefetch_related("ratings")
+            .first()
+        )
+
+    @staticmethod
+    @transaction.atomic
+    def create_review(
+        booking, customer, listing, review_text: str, ratings: dict[str, int]
+    ) -> VehicleReview:
+        review = VehicleReview.objects.create(
+            booking=booking,
+            customer=customer,
+            listing=listing,
+            review_text=review_text,
+        )
+        # save() on VehicleReview auto-approves rating-only submissions
+        # (blank review_text) — nothing extra needed here.
+        rating_rows = [
+            ReviewRating(review=review, criterion=criterion, score=score)
+            for criterion, score in ratings.items()
+        ]
+        ReviewRating.objects.bulk_create(rating_rows)
+        return review
+
+    @staticmethod
+    @transaction.atomic
+    def update_review(
+        review: VehicleReview, review_text: str, ratings: dict[str, int]
+    ) -> VehicleReview:
+        review.review_text = review_text
+        # Any edit goes back to PENDING — save() will re-auto-approve
+        # if the edited text ends up blank, same rule as on create.
+        review.moderation_status = VehicleReview.ModerationStatus.PENDING
+        review.save()
+
+        review.ratings.all().delete()
+        rating_rows = [
+            ReviewRating(review=review, criterion=criterion, score=score)
+            for criterion, score in ratings.items()
+        ]
+        ReviewRating.objects.bulk_create(rating_rows)
+        return review
+
+    @staticmethod
+    def delete_review(review) -> None:
+        review.delete()
+
+
+class AdminReviewRepository:
+
+    @staticmethod
+    def get_all(status_filter=None, vendor_id=None, search=None):
+        qs = (
+            VehicleReview.objects.select_related(
+                "customer", "listing__vehicle_type__brand", "listing__vendor", "booking"
+            )
+            .prefetch_related("ratings")
+            .order_by("-created_at")
+        )
+        if status_filter:
+            qs = qs.filter(moderation_status=status_filter)
+        if vendor_id:
+            qs = qs.filter(listing__vendor_id=vendor_id)
+        if search:
+            qs = qs.filter(
+                Q(booking__booking_reference__icontains=search)
+                | Q(customer__phone_number__icontains=search)
+                | Q(listing__vendor__business_name__icontains=search)
+                | Q(listing__vehicle_type__name__icontains=search)
+            )
+        return qs
+
+    @staticmethod
+    def get_by_id(review_id: int):
+        return (
+            VehicleReview.objects.filter(id=review_id)
+            .select_related(
+                "customer",
+                "listing__vehicle_type__brand",
+                "listing__vendor",
+                "booking",
+                "moderated_by",
+            )
+            .prefetch_related("ratings")
             .first()
         )
