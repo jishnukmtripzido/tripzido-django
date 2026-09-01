@@ -16,6 +16,11 @@ from apps.vendors.views import (
     AdminVendorSubscriptionsView,
     AdminVendorTeamMemberDetailView,
     AdminVendorTeamView,
+    VendorDashboardAttentionView,
+    VendorDashboardFleetView,
+    VendorDashboardRecentBookingsView,
+    VendorDashboardStatsView,
+    VendorDashboardStatusView,
     VendorDashboardView,
     VendorTermsView,
     VendorTermsManageView,
@@ -27,6 +32,31 @@ urlpatterns = [
     # Public read of a specific vendor's terms — used by the customer app.
     path("<int:vendor_id>/terms/", VendorTermsView.as_view(), name="vendor-terms"),
     path("me/dashboard/", VendorDashboardView.as_view(), name="vendor-dashboard"),
+    path(
+        "me/dashboard/status/",
+        VendorDashboardStatusView.as_view(),
+        name="vendor-dashboard-status",
+    ),
+    path(
+        "me/dashboard/attention/",
+        VendorDashboardAttentionView.as_view(),
+        name="vendor-dashboard-attention",
+    ),
+    path(
+        "me/dashboard/stats/",
+        VendorDashboardStatsView.as_view(),
+        name="vendor-dashboard-stats",
+    ),
+    path(
+        "me/dashboard/fleet/",
+        VendorDashboardFleetView.as_view(),
+        name="vendor-dashboard-fleet",
+    ),
+    path(
+        "me/dashboard/recent-bookings/",
+        VendorDashboardRecentBookingsView.as_view(),
+        name="vendor-dashboard-recent-bookings",
+    ),
     path("admin/vendors/", AdminVendorListView.as_view(), name="admin-vendor-list"),
     path(
         "admin/vendors/<int:vendor_id>/",

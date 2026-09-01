@@ -322,3 +322,36 @@ class AdminVendorTeamMemberCreateSerializer(serializers.Serializer):
     last_name = serializers.CharField(
         max_length=50, required=False, allow_blank=True, default=""
     )
+
+
+class VendorDashboardStatusSerializer(serializers.Serializer):
+    vendor_status = serializers.CharField()
+    vendor_status_label = serializers.CharField()
+    vendor_rejection_reason = serializers.CharField(allow_blank=True)
+    current_balance = serializers.DecimalField(max_digits=12, decimal_places=2)
+
+
+class VendorDashboardAttentionSerializer(serializers.Serializer):
+    bookings_to_start = VendorBookingListSerializer(many=True)
+    bookings_to_return = VendorBookingListSerializer(many=True)
+
+
+class VendorDashboardStatsSerializer(serializers.Serializer):
+    revenue_this_month = serializers.DecimalField(max_digits=12, decimal_places=2)
+    revenue_last_month = serializers.DecimalField(max_digits=12, decimal_places=2)
+    revenue_trend_pct = serializers.FloatField()
+    orders_this_month = serializers.IntegerField()
+    orders_last_month = serializers.IntegerField()
+    orders_trend_pct = serializers.FloatField()
+    weekly_order_bars = serializers.ListField(child=serializers.IntegerField())
+    range_label = serializers.CharField()
+
+
+class VendorDashboardFleetSerializer(serializers.Serializer):
+    fleet_total_listings = serializers.IntegerField()
+    fleet_pending_approval = serializers.IntegerField()
+    fleet_blocked_units = serializers.IntegerField()
+
+
+class VendorDashboardRecentBookingsSerializer(serializers.Serializer):
+    recent_bookings = VendorBookingListSerializer(many=True)

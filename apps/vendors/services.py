@@ -103,6 +103,68 @@ class VendorDashboardService:
             "recent_bookings": VendorDashboardRepository.get_recent_bookings(vendor.id),
         }
 
+    @staticmethod
+    def get_status_and_balance(vendor) -> dict:
+        return {
+            "vendor_status": vendor.status,
+            "vendor_status_label": vendor.get_status_display(),
+            "vendor_rejection_reason": vendor.rejection_reason,
+            "current_balance": VendorDashboardRepository.get_current_balance(vendor.id),
+        }
+
+    @staticmethod
+    def get_needs_attention_section(vendor) -> dict:
+        to_start, to_return = VendorDashboardRepository.get_needs_attention(vendor.id)
+        return {
+            "bookings_to_start": to_start,
+            "bookings_to_return": to_return,
+        }
+
+    @staticmethod
+    def get_stats(vendor) -> dict:
+        this_start, now, last_start, last_end = VendorDashboardService._month_bounds()
+
+        revenue_this_month = VendorDashboardRepository.get_revenue_for_period(
+            vendor.id, this_start, now
+        )
+        revenue_last_month = VendorDashboardRepository.get_revenue_for_period(
+            vendor.id, last_start, last_end
+        )
+        orders_this_month = VendorDashboardRepository.get_orders_count_for_period(
+            vendor.id, this_start, now
+        )
+        orders_last_month = VendorDashboardRepository.get_orders_count_for_period(
+            vendor.id, last_start, last_end
+        )
+
+        return {
+            "revenue_this_month": revenue_this_month,
+            "revenue_last_month": revenue_last_month,
+            "revenue_trend_pct": _trend_pct(revenue_this_month, revenue_last_month),
+            "orders_this_month": orders_this_month,
+            "orders_last_month": orders_last_month,
+            "orders_trend_pct": _trend_pct(orders_this_month, orders_last_month),
+            "weekly_order_bars": VendorDashboardRepository.get_weekly_booking_counts(
+                vendor.id
+            ),
+            "range_label": f"{this_start:%d %b %Y} - {now:%d %b %Y}",
+        }
+
+    @staticmethod
+    def get_fleet_section(vendor) -> dict:
+        fleet = VendorDashboardRepository.get_fleet_snapshot(vendor.id)
+        return {
+            "fleet_total_listings": fleet["total_listings"],
+            "fleet_pending_approval": fleet["pending_approval"],
+            "fleet_blocked_units": fleet["blocked_units"],
+        }
+
+    @staticmethod
+    def get_recent_bookings_section(vendor) -> dict:
+        return {
+            "recent_bookings": VendorDashboardRepository.get_recent_bookings(vendor.id),
+        }
+
 
 class AdminVendorService:
 

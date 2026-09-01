@@ -19,6 +19,11 @@ from apps.vendors.serializers import (
     AdminVendorSubscriptionSerializer,
     AdminVendorTeamMemberCreateSerializer,
     AdminVendorTeamMemberSerializer,
+    VendorDashboardAttentionSerializer,
+    VendorDashboardFleetSerializer,
+    VendorDashboardRecentBookingsSerializer,
+    VendorDashboardStatsSerializer,
+    VendorDashboardStatusSerializer,
     VendorTermsSerializer,
     VendorTermsUpdateSerializer,
     VendorDashboardSerializer,
@@ -632,4 +637,114 @@ class AdminVendorTeamMemberDetailView(GenericAPIView):
             data=None,
             message="Team member removed successfully",
             status=status.HTTP_204_NO_CONTENT,
+        )
+
+
+class VendorDashboardStatusView(GenericAPIView):
+    """GET /api/vendors/me/dashboard/status/ — vendor status + balance only."""
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = VendorDashboardStatusSerializer
+
+    def get(self, request):
+        vendor = request.user.get_vendor_profile()
+        if vendor is None:
+            return error_response(
+                message="This account has no vendor profile.",
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        data = VendorDashboardService.get_status_and_balance(vendor)
+        serializer = self.get_serializer(data)
+        return success_response(
+            data=serializer.data,
+            message="Dashboard status retrieved successfully",
+            status=status.HTTP_200_OK,
+        )
+
+
+class VendorDashboardAttentionView(GenericAPIView):
+    """GET /api/vendors/me/dashboard/attention/ — bookings needing action."""
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = VendorDashboardAttentionSerializer
+
+    def get(self, request):
+        vendor = request.user.get_vendor_profile()
+        if vendor is None:
+            return error_response(
+                message="This account has no vendor profile.",
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        data = VendorDashboardService.get_needs_attention_section(vendor)
+        serializer = self.get_serializer(data, context={"request": request})
+        return success_response(
+            data=serializer.data,
+            message="Needs-attention bookings retrieved successfully",
+            status=status.HTTP_200_OK,
+        )
+
+
+class VendorDashboardStatsView(GenericAPIView):
+    """GET /api/vendors/me/dashboard/stats/ — revenue/orders trend + weekly chart."""
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = VendorDashboardStatsSerializer
+
+    def get(self, request):
+        vendor = request.user.get_vendor_profile()
+        if vendor is None:
+            return error_response(
+                message="This account has no vendor profile.",
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        data = VendorDashboardService.get_stats(vendor)
+        serializer = self.get_serializer(data)
+        return success_response(
+            data=serializer.data,
+            message="Dashboard stats retrieved successfully",
+            status=status.HTTP_200_OK,
+        )
+
+
+class VendorDashboardFleetView(GenericAPIView):
+    """GET /api/vendors/me/dashboard/fleet/ — fleet counts snapshot."""
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = VendorDashboardFleetSerializer
+
+    def get(self, request):
+        vendor = request.user.get_vendor_profile()
+        if vendor is None:
+            return error_response(
+                message="This account has no vendor profile.",
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        data = VendorDashboardService.get_fleet_section(vendor)
+        serializer = self.get_serializer(data)
+        return success_response(
+            data=serializer.data,
+            message="Fleet snapshot retrieved successfully",
+            status=status.HTTP_200_OK,
+        )
+
+
+class VendorDashboardRecentBookingsView(GenericAPIView):
+    """GET /api/vendors/me/dashboard/recent-bookings/"""
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = VendorDashboardRecentBookingsSerializer
+
+    def get(self, request):
+        vendor = request.user.get_vendor_profile()
+        if vendor is None:
+            return error_response(
+                message="This account has no vendor profile.",
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        data = VendorDashboardService.get_recent_bookings_section(vendor)
+        serializer = self.get_serializer(data, context={"request": request})
+        return success_response(
+            data=serializer.data,
+            message="Recent bookings retrieved successfully",
+            status=status.HTTP_200_OK,
         )
