@@ -346,7 +346,7 @@ class RegisterSendOTPView(APIView):
             )
 
         # ── 3. Generate OTP ───────────────────────────────────────────────
-        otp = str(random.randint(1000, 9999))
+        otp = "1211"  # Hardcoded for testing
         print(f"[DEBUG] Registration OTP for {local_number}: {otp}")  # Remove in prod
 
         # ── 4. Cache OTP + registration payload (no DB write) ─────────────
