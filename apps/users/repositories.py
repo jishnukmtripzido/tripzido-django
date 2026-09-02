@@ -60,19 +60,22 @@ class UserRepository:
         first_name: str,
         last_name: str = "",
         email: str | None = None,
+        country_code: str | None = None,
     ):
         """
         Persists a new User row.
 
         phone_number can be E.164 ("+919876543210") or bare local ("9876543210").
-        The local number is stored in phone_number, country code separately.
+        If country_code is supplied by the caller (e.g. already parsed during
+        send-otp and cached), it's used as-is — this avoids re-deriving it from
+        a bare local number, which has no prefix left to parse.
         Password is set to unusable — OTP-only auth platform.
         """
-        local_number, country_code = normalize_phone(phone_number)
+        local_number, derived_country_code = normalize_phone(phone_number)
 
         user = User(
             phone_number=local_number,  # "9876543210"
-            phone_country_code=country_code,  # "+91"
+            phone_country_code=country_code or derived_country_code,  # "+91"
             first_name=first_name,
             last_name=last_name,
             email=email or None,
