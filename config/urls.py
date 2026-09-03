@@ -48,4 +48,5 @@ urlpatterns = [
     path("api/bookings/", include("apps.bookings.urls")),
     path("api/payments/", include("apps.payments.urls")),
     path("summernote/", include("django_summernote.urls")),
+    path("api/notifications/", include("apps.notifications.urls")),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

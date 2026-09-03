@@ -1658,7 +1658,7 @@ class AdminReviewListView(GenericAPIView):
 
 
 class AdminReviewDetailView(GenericAPIView):
-    """GET/DELETE /api/vehicles/admin/reviews/<int:review_id>/"""
+    """GET/DELETE /api/vehicles/admin/reviews/<int:review_id>/ — DELETE is permanent."""
 
     permission_classes = [IsAuthenticated, IsStaffRole]
     serializer_class = AdminReviewDetailSerializer
@@ -1677,15 +1677,51 @@ class AdminReviewDetailView(GenericAPIView):
         )
 
     def delete(self, request, review_id: int):
-        deleted = AdminReviewService.delete_review(review_id)
+        deleted = AdminReviewService.hard_delete_review(review_id)
         if not deleted:
             return error_response(
                 message="Review not found", status=status.HTTP_404_NOT_FOUND
             )
         return success_response(
             data=None,
-            message="Review deleted successfully",
+            message="Review permanently deleted",
             status=status.HTTP_204_NO_CONTENT,
+        )
+
+
+class AdminReviewDeactivateView(GenericAPIView):
+    """PATCH /api/vehicles/admin/reviews/<int:review_id>/deactivate/"""
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+    serializer_class = AdminReviewDetailSerializer
+
+    def patch(self, request, review_id: int):
+        ok = AdminReviewService.deactivate_review(
+            review_id, deactivated_by=request.user
+        )
+        if not ok:
+            return error_response(
+                message="Review not found", status=status.HTTP_404_NOT_FOUND
+            )
+        return success_response(
+            data=None, message="Review deactivated", status=status.HTTP_200_OK
+        )
+
+
+class AdminReviewRestoreView(GenericAPIView):
+    """PATCH /api/vehicles/admin/reviews/<int:review_id>/restore/"""
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+    serializer_class = AdminReviewDetailSerializer
+
+    def patch(self, request, review_id: int):
+        ok = AdminReviewService.restore_review(review_id)
+        if not ok:
+            return error_response(
+                message="Review not found", status=status.HTTP_404_NOT_FOUND
+            )
+        return success_response(
+            data=None, message="Review reactivated", status=status.HTTP_200_OK
         )
 
 

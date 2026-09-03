@@ -1,7 +1,8 @@
 from django.db.models import Q
 from django.utils import timezone
-
-from apps.payments.models import Payment, RefundRecord
+from apps.payments.models import Payment, RefundRecord, VendorPayout
+from apps.notifications.services import NotificationService
+from apps.notifications.models import Notification
 from apps.payments.repositories import (
     AdminEligibleBookingRepository,
     AdminRefundRepository,
@@ -44,9 +45,36 @@ class AdminVendorPayoutService:
 
     @staticmethod
     def update_status(payout_id, target_status, admin_user, utr_number="", note=""):
-        return AdminVendorPayoutRepository.update_status(
+        payout, error = AdminVendorPayoutRepository.update_status(
             payout_id, target_status, admin_user, utr_number, note
         )
+        if payout is None:
+            return None, error
+
+        # Only PAID/FAILED are notification-worthy — a payout sitting
+        # in PENDING is an internal admin batching step the vendor
+        # doesn't need a push about yet; they find out once it's
+        # actually resolved one way or the other.
+        if target_status == VendorPayout.Status.PAID:
+            NotificationService.notify_vendor_and_team(
+                vendor=payout.vendor,
+                portal=Notification.Portal.VENDOR,
+                notification_type=Notification.NotificationType.PAYOUT_PAID,
+                title="Payout completed",
+                message=f"₹{payout.total_amount} has been transferred (UTR: {payout.utr_number}).",
+                link=f"/ledger/detail?id={payout.id}",
+            )
+        elif target_status == VendorPayout.Status.FAILED:
+            NotificationService.notify_vendor_and_team(
+                vendor=payout.vendor,
+                portal=Notification.Portal.VENDOR,
+                notification_type=Notification.NotificationType.PAYOUT_FAILED,
+                title="Payout failed",
+                message=f"Your payout of ₹{payout.total_amount} could not be completed. Contact support for details.",
+                link=f"/ledger/detail?id={payout.id}",
+            )
+
+        return payout, None
 
 
 class AdminPaymentService:

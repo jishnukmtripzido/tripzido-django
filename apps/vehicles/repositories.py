@@ -426,13 +426,12 @@ class VehicleReviewRepository:
     @staticmethod
     def get_rating_aggregates(listing_id: int) -> dict:
         """
-        Average rating + count of approved reviews for a listing.
-
-        VehicleReview has no `rating` field of its own — the real score
-        lives in ReviewRating (one row per criterion per review). This
-        averages every individual criterion score across all approved
-        reviews for the listing, so a review that only rated 2 criteria
-        doesn't get the same weight as one that rated all 5.
+        Average rating + count of approved, active reviews for a
+        listing. review__is_active=True is required explicitly here —
+        relation-traversal filters like review__moderation_status
+        query via a raw SQL JOIN and never go through VehicleReview's
+        own soft-delete manager, so a deactivated review's ratings
+        would otherwise keep silently counting toward this average.
         """
         total_count = VehicleReview.objects.filter(
             listing_id=listing_id,
@@ -442,21 +441,19 @@ class VehicleReviewRepository:
         avg = ReviewRating.objects.filter(
             review__listing_id=listing_id,
             review__moderation_status=VehicleReview.ModerationStatus.APPROVED,
+            review__is_active=True,
         ).aggregate(average_rating=Avg("score"))["average_rating"]
 
         return {"average_rating": avg, "total_count": total_count}
 
     @staticmethod
     def get_criterion_breakdown(listing_id: int) -> list[dict]:
-        """
-        Average score per rating criterion across approved reviews for
-        this listing — powers the rating-breakdown bars on the summary.
-        Criteria nobody has rated yet are omitted rather than shown as 0.
-        """
+        """Same review__is_active=True reasoning as get_rating_aggregates above."""
         rows = (
             ReviewRating.objects.filter(
                 review__listing_id=listing_id,
                 review__moderation_status=VehicleReview.ModerationStatus.APPROVED,
+                review__is_active=True,
             )
             .values("criterion")
             .annotate(average_score=Avg("score"), count=Count("id"))
@@ -1136,8 +1133,12 @@ class AdminReviewRepository:
 
     @staticmethod
     def get_all(status_filter=None, vendor_id=None, search=None):
+        # all_objects, not objects — the default SoftDeleteManager
+        # excludes deactivated rows entirely, which would make a
+        # deactivated review permanently invisible with no way to
+        # reactivate it. Same reasoning as VendorTeamMember.get_team.
         qs = (
-            VehicleReview.objects.select_related(
+            VehicleReview.all_objects.select_related(
                 "customer", "listing__vehicle_type__brand", "listing__vendor", "booking"
             )
             .prefetch_related("ratings")
@@ -1159,7 +1160,7 @@ class AdminReviewRepository:
     @staticmethod
     def get_by_id(review_id: int):
         return (
-            VehicleReview.objects.filter(id=review_id)
+            VehicleReview.all_objects.filter(id=review_id)
             .select_related(
                 "customer",
                 "listing__vehicle_type__brand",

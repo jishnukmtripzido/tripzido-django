@@ -14,7 +14,9 @@ from apps.vendors.views import (
     AdminVendorStatusUpdateView,
     AdminVendorSubscriptionAssignView,
     AdminVendorSubscriptionsView,
+    AdminVendorTeamMemberDeactivateView,
     AdminVendorTeamMemberDetailView,
+    AdminVendorTeamMemberRestoreView,
     AdminVendorTeamView,
     VendorDashboardAttentionView,
     VendorDashboardFleetView,
@@ -132,5 +134,15 @@ urlpatterns = [
         "admin/team/<int:member_id>/",
         AdminVendorTeamMemberDetailView.as_view(),
         name="admin-vendor-team-member-detail",
+    ),
+    path(
+        "admin/team/<int:member_id>/deactivate/",
+        AdminVendorTeamMemberDeactivateView.as_view(),
+        name="admin-vendor-team-member-deactivate",
+    ),
+    path(
+        "admin/team/<int:member_id>/restore/",
+        AdminVendorTeamMemberRestoreView.as_view(),
+        name="admin-vendor-team-member-restore",
     ),
 ]

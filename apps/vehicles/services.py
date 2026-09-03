@@ -23,6 +23,8 @@ from apps.locations.services import PickupLocationService
 from django.utils import timezone
 from apps.vehicles.utils import format_duration
 from apps.vehicles.models import VehicleListing
+from apps.notifications.services import NotificationService
+from apps.notifications.models import Notification
 
 
 class AvailabilityService:
@@ -1172,7 +1174,7 @@ class VendorListingCreateService:
             "operating_hours_end": validated_data.get("operating_hours_end"),
         }
 
-        return VendorFleetRepository.create_listing(
+        listing = VendorFleetRepository.create_listing(
             vendor,
             vehicle_type,
             pickup_location,
@@ -1181,6 +1183,15 @@ class VendorListingCreateService:
             listing_fields,
             packages,
         )
+
+        NotificationService.notify_all_staff(
+            notification_type=Notification.NotificationType.LISTING_SUBMITTED,
+            title="New listing submitted for review",
+            message=f"{vendor.business_name} submitted {vehicle_type.name} for approval",
+            link=f"/listings/{listing.id}",
+        )
+
+        return listing
 
 
 class VendorListingImageService:
@@ -1264,7 +1275,7 @@ class VendorListingUpdateService:
             "operating_hours_end": validated_data.get("operating_hours_end"),
         }
 
-        return VendorFleetRepository.update_listing(
+        updated_listing = VendorFleetRepository.update_listing(
             listing,
             pickup_location,
             pickup_point,
@@ -1272,6 +1283,19 @@ class VendorListingUpdateService:
             listing_fields,
             packages,
         )
+
+        # VendorFleetRepository.update_listing unconditionally resets
+        # status back to PENDING_APPROVAL on every edit — so a
+        # successful call here always genuinely means "needs
+        # re-review," no conditional check required.
+        NotificationService.notify_all_staff(
+            notification_type=Notification.NotificationType.LISTING_SUBMITTED,
+            title="Listing resubmitted for review",
+            message=f"{vendor.business_name} updated {listing.vehicle_type.name} — pending re-approval",
+            link=f"/listings/{updated_listing.id}",
+        )
+
+        return updated_listing
 
 
 class VendorBlockedPeriodService:
@@ -1399,8 +1423,14 @@ class AdminListingService:
     def update_status(
         listing_id: int, target_status: str, admin_user, reason: str = ""
     ):
+        # listing = (
+        #     VehicleListing.objects.select_for_update().filter(id=listing_id).first()
+        # )
         listing = (
-            VehicleListing.objects.select_for_update().filter(id=listing_id).first()
+            VehicleListing.objects.select_for_update()
+            .select_related("vehicle_type__brand", "vendor")
+            .filter(id=listing_id)
+            .first()
         )
         if listing is None:
             return None, "Listing not found"
@@ -1435,6 +1465,34 @@ class AdminListingService:
 
         listing.status = target_status
         listing.save()
+
+        vehicle_label = f"{listing.vehicle_type.brand.name} {listing.vehicle_type.name}"
+        if target_status == VehicleListing.Status.APPROVED:
+            title = "Listing reactivated" if was_suspended else "Listing approved"
+            message = f"{vehicle_label} is now live and bookable."
+        elif target_status == VehicleListing.Status.REJECTED:
+            title = "Listing rejected"
+            message = f"{vehicle_label} was rejected: {reason}"
+        elif target_status == VehicleListing.Status.SUSPENDED:
+            title = "Listing suspended"
+            message = f"{vehicle_label} was suspended: {reason}"
+        else:
+            title, message = None, None
+
+        if title:
+            NotificationService.notify_vendor_and_team(
+                vendor=listing.vendor,
+                portal=Notification.Portal.VENDOR,
+                notification_type={
+                    VehicleListing.Status.APPROVED: Notification.NotificationType.LISTING_APPROVED,
+                    VehicleListing.Status.REJECTED: Notification.NotificationType.LISTING_REJECTED,
+                    VehicleListing.Status.SUSPENDED: Notification.NotificationType.LISTING_SUSPENDED,
+                }[target_status],
+                title=title,
+                message=message,
+                link=f"/fleet/listing?id={listing.id}",
+            )
+
         return listing, None
 
     @staticmethod
@@ -1565,8 +1623,34 @@ class AdminReviewService:
         return review, None
 
     @staticmethod
-    def delete_review(review_id: int) -> bool:
-        from apps.vehicles.models import VehicleReview
+    def deactivate_review(review_id: int, deactivated_by) -> bool:
+        """
+        Soft-deletes via the instance, not a queryset — calling
+        .delete() on an already-fetched object routes through
+        BaseModel's overridden delete(), which is what actually marks
+        is_active=False and records deleted_by/deleted_at. A queryset
+        .filter(...).delete() would bypass that override entirely and
+        hard-delete instead — see the earlier VendorTeamMember fix for
+        the full mechanism.
+        """
+        review = AdminReviewRepository.get_by_id(review_id)
+        if review is None:
+            return False
+        review.delete(deleted_by=deactivated_by)
+        return True
 
-        deleted, _ = VehicleReview.objects.filter(id=review_id).delete()
-        return deleted > 0
+    @staticmethod
+    def restore_review(review_id: int) -> bool:
+        review = AdminReviewRepository.get_by_id(review_id)
+        if review is None:
+            return False
+        review.restore()
+        return True
+
+    @staticmethod
+    def hard_delete_review(review_id: int) -> bool:
+        review = AdminReviewRepository.get_by_id(review_id)
+        if review is None:
+            return False
+        review.hard_delete()
+        return True

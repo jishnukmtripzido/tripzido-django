@@ -1052,6 +1052,7 @@ class AdminReviewListSerializer(serializers.Serializer):
     moderation_status_label = serializers.CharField(
         source="get_moderation_status_display"
     )
+    is_active = serializers.BooleanField()
     created_at = serializers.DateTimeField()
 
     def get_customer_name(self, obj):
@@ -1081,6 +1082,7 @@ class AdminReviewDetailSerializer(serializers.Serializer):
     moderation_note = serializers.CharField(allow_blank=True)
     moderated_by_name = serializers.SerializerMethodField()
     moderated_at = serializers.DateTimeField(allow_null=True)
+    is_active = serializers.BooleanField()
     created_at = serializers.DateTimeField()
 
     def get_customer_name(self, obj):
@@ -1102,7 +1104,7 @@ class AdminReviewDetailSerializer(serializers.Serializer):
         ]
 
     def get_moderated_by_name(self, obj):
-        return obj.moderated_by.get_full_name() if obj.moderated_by else None
+        return obj.moderated_by.get
 
 
 class AdminReviewStatusUpdateSerializer(serializers.Serializer):

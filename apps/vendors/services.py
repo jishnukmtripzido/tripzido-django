@@ -440,8 +440,11 @@ class AdminVendorTeamService:
 
     @staticmethod
     def get_team(vendor_id: int):
+        # all_objects, not objects — the default SoftDeleteManager
+        # excludes deactivated members entirely, which would make
+        # them permanently invisible here with no way to reactivate.
         return (
-            VendorTeamMember.objects.filter(vendor_id=vendor_id)
+            VendorTeamMember.all_objects.filter(vendor_id=vendor_id)
             .select_related("user", "added_by")
             .order_by("-created_at")
         )
@@ -481,6 +484,42 @@ class AdminVendorTeamService:
         return member, None
 
     @staticmethod
-    def remove_team_member(member_id: int):
-        deleted, _ = VendorTeamMember.objects.filter(id=member_id).delete()
-        return deleted > 0
+    def deactivate_team_member(member_id: int, deactivated_by) -> bool:
+        """
+        Soft-deactivates the membership AND blocks the underlying
+        login together — a deactivated membership with a still-active
+        login would be a real access-control gap, not just a display
+        inconsistency.
+        """
+        member = VendorTeamMember.all_objects.filter(id=member_id).first()
+        if member is None:
+            return False
+        member.delete(deleted_by=deactivated_by)  # BaseModel's soft-delete override
+        member.user.is_active = False
+        member.user.save(update_fields=["is_active"])
+        return True
+
+    @staticmethod
+    def restore_team_member(member_id: int) -> bool:
+        member = VendorTeamMember.all_objects.filter(id=member_id).first()
+        if member is None:
+            return False
+        member.restore()
+        member.user.is_active = True
+        member.user.save(update_fields=["is_active"])
+        return True
+
+    @staticmethod
+    def hard_delete_team_member(member_id: int) -> bool:
+        """
+        Permanently removes the VendorTeamMember row only — not the
+        underlying User. See the note above: BaseModel's PROTECT
+        foreign keys make a User hard-delete unreliable once they've
+        done anything else in the app. Removing the membership already
+        fully revokes access to this vendor.
+        """
+        member = VendorTeamMember.all_objects.filter(id=member_id).first()
+        if member is None:
+            return False
+        member.hard_delete()
+        return True

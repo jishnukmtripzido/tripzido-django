@@ -583,6 +583,7 @@ class AdminVendorTeamView(GenericAPIView):
                 "email": m.user.email,
                 "added_at": m.created_at,
                 "added_by_name": m.added_by.get_full_name() if m.added_by else None,
+                "is_active": m.is_active,
             }
             for m in members
         ]
@@ -615,6 +616,7 @@ class AdminVendorTeamView(GenericAPIView):
                 "email": member.user.email,
                 "added_at": member.created_at,
                 "added_by_name": request.user.get_full_name(),
+                "is_active": True,
             },
             message="Team member added successfully",
             status=status.HTTP_201_CREATED,
@@ -622,21 +624,57 @@ class AdminVendorTeamView(GenericAPIView):
 
 
 class AdminVendorTeamMemberDetailView(GenericAPIView):
-    """DELETE /api/vendors/admin/team/<int:member_id>/"""
+    """DELETE /api/vendors/admin/team/<int:member_id>/ — permanent, irreversible."""
 
     permission_classes = [IsAuthenticated, IsStaffRole]
     serializer_class = AdminVendorTeamMemberSerializer
 
     def delete(self, request, member_id: int):
-        deleted = AdminVendorTeamService.remove_team_member(member_id)
+        deleted = AdminVendorTeamService.hard_delete_team_member(member_id)
         if not deleted:
             return error_response(
                 message="Team member not found", status=status.HTTP_404_NOT_FOUND
             )
         return success_response(
             data=None,
-            message="Team member removed successfully",
+            message="Team member permanently deleted",
             status=status.HTTP_204_NO_CONTENT,
+        )
+
+
+class AdminVendorTeamMemberDeactivateView(GenericAPIView):
+    """PATCH /api/vendors/admin/team/<int:member_id>/deactivate/"""
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+    serializer_class = AdminVendorTeamMemberSerializer
+
+    def patch(self, request, member_id: int):
+        ok = AdminVendorTeamService.deactivate_team_member(
+            member_id, deactivated_by=request.user
+        )
+        if not ok:
+            return error_response(
+                message="Team member not found", status=status.HTTP_404_NOT_FOUND
+            )
+        return success_response(
+            data=None, message="Team member deactivated", status=status.HTTP_200_OK
+        )
+
+
+class AdminVendorTeamMemberRestoreView(GenericAPIView):
+    """PATCH /api/vendors/admin/team/<int:member_id>/restore/"""
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+    serializer_class = AdminVendorTeamMemberSerializer
+
+    def patch(self, request, member_id: int):
+        ok = AdminVendorTeamService.restore_team_member(member_id)
+        if not ok:
+            return error_response(
+                message="Team member not found", status=status.HTTP_404_NOT_FOUND
+            )
+        return success_response(
+            data=None, message="Team member reactivated", status=status.HTTP_200_OK
         )
 
 

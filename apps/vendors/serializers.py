@@ -311,6 +311,7 @@ class AdminVendorTeamMemberSerializer(serializers.Serializer):
     email = serializers.CharField(allow_blank=True, allow_null=True)
     added_at = serializers.DateTimeField()
     added_by_name = serializers.CharField(allow_null=True)
+    is_active = serializers.BooleanField()
 
 
 class AdminVendorTeamMemberCreateSerializer(serializers.Serializer):

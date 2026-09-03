@@ -34,6 +34,8 @@ from django.template.loader import render_to_string
 from weasyprint import HTML
 from django.utils import timezone
 from apps.payments.models import Payment
+from apps.notifications.services import NotificationService
+from apps.notifications.models import Notification
 
 
 def _generate_booking_reference() -> str:
@@ -401,6 +403,36 @@ class BookingCheckoutService:
             booking.status = Booking.Status.CONFIRMED
             booking.save()
 
+        # ── Notifications — fired only here, at the moment a booking
+        # actually becomes CONFIRMED, not at order creation. Doing it
+        # at create_order would also notify on abandoned/failed
+        # checkouts that never became a real booking — pure noise for
+        # something the vendor can't act on yet.
+        first_booking = group_bookings.first()
+        if first_booking is not None:
+            vendor_user = first_booking.listing.vendor.user
+            vehicle_name = first_booking.listing.vehicle_type.name
+            vehicle_count = group_bookings.count()
+
+            NotificationService.notify_vendor_and_team(
+                vendor=first_booking.listing.vendor,
+                portal=Notification.Portal.VENDOR,
+                notification_type=Notification.NotificationType.NEW_BOOKING,
+                title="New booking confirmed",
+                message=(
+                    f"{vehicle_name} booked"
+                    + (f" ({vehicle_count} vehicles)" if vehicle_count > 1 else "")
+                ),
+                link=f"/bookings/detail?id={first_booking.id}",
+            )
+
+            NotificationService.notify_all_staff(
+                notification_type=Notification.NotificationType.NEW_BOOKING,
+                title="New booking on the platform",
+                message=f"{vehicle_name} booked from {first_booking.listing.vendor.business_name}",
+                link=f"/bookings/{first_booking.id}",
+            )
+
         return True
 
     @staticmethod
@@ -680,19 +712,6 @@ class CancellationService:
         )
         forfeited_amount = paid_amount - refundable_amount
 
-        # cancellation = BookingCancellationRepository.create_cancellation_record(
-        #     booking=booking,
-        #     cancelled_by=cancelled_by_user,
-        #     cancelled_by_role=cancelled_by_role,
-        #     reason_code=reason_code,
-        #     reason_text=reason_text,
-        #     policy_version=policy_version,
-        #     hours_before_pickup_at_cancellation=hours_before_pickup,
-        #     refund_percentage=refund_percentage,
-        #     refundable_amount=refundable_amount,
-        #     forfeited_amount=forfeited_amount,
-        # )
-
         cancellation = BookingCancellationRepository.create_cancellation_record(
             booking=booking,
             cancelled_by=cancelled_by_user,
@@ -715,12 +734,30 @@ class CancellationService:
                 amount=refundable_amount,
             )
 
-        booking.status = Booking.Status.CANCELLED
-        booking.cancelled_at = timezone.now()
-        booking.cancelled_by_role = cancelled_by_role
-        booking.save(update_fields=["status", "cancelled_at", "cancelled_by_role"])
-
-        return cancellation
+        vehicle_label = f"{booking.listing.vehicle_type.brand.name} {booking.listing.vehicle_type.name}"
+        if cancelled_by_role in ("CUSTOMER", "ADMIN"):
+            NotificationService.notify_vendor_and_team(
+                vendor=booking.listing.vendor,
+                portal=Notification.Portal.VENDOR,
+                notification_type=Notification.NotificationType.BOOKING_CANCELLED,
+                title="Booking cancelled",
+                message=(
+                    f"{vehicle_label} booking ({booking.booking_reference}) was cancelled"
+                    + (
+                        f" by admin: {reason_text}"
+                        if cancelled_by_role == "ADMIN" and reason_text
+                        else ""
+                    )
+                ),
+                link=f"/bookings/detail?id={booking.id}",
+            )
+        elif cancelled_by_role == "VENDOR":
+            NotificationService.notify_all_staff(
+                notification_type=Notification.NotificationType.BOOKING_CANCELLED,
+                title="Vendor cancelled a booking",
+                message=f"{booking.listing.vendor.business_name} cancelled {vehicle_label} ({booking.booking_reference})",
+                link=f"/bookings/{booking.id}",
+            )
 
         booking.status = Booking.Status.CANCELLED
         booking.cancelled_at = timezone.now()

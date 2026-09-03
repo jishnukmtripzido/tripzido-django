@@ -2,8 +2,10 @@ from django.urls import path
 from apps.vehicles.views import (
     AdminBrandDetailView,
     AdminBrandListCreateView,
+    AdminReviewDeactivateView,
     AdminReviewDetailView,
     AdminReviewListView,
+    AdminReviewRestoreView,
     AdminReviewStatusUpdateView,
     AdminVehicleTypeListCreateView,
     AdminVehicleTypeDetailView,
@@ -172,5 +174,15 @@ urlpatterns = [
         "admin/reviews/<int:review_id>/status/",
         AdminReviewStatusUpdateView.as_view(),
         name="admin-review-status",
+    ),
+    path(
+        "admin/reviews/<int:review_id>/deactivate/",
+        AdminReviewDeactivateView.as_view(),
+        name="admin-review-deactivate",
+    ),
+    path(
+        "admin/reviews/<int:review_id>/restore/",
+        AdminReviewRestoreView.as_view(),
+        name="admin-review-restore",
     ),
 ]
