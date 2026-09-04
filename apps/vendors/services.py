@@ -389,23 +389,51 @@ class AdminVendorRegistrationService:
     @staticmethod
     @transaction.atomic
     def register(data: dict, admin_user):
+        from django.db.models import Q
         from apps.users.models import User, Role, UserRoleAssignment
 
         phone_number = data["phone_number"]
+        email = data["email"]
+        existing_user_id = data.get("existing_user_id")
 
-        if User.objects.filter(phone_number=phone_number).exists():
-            return None, "A user with this phone number already exists."
-        if Vendor.objects.filter(email__iexact=data["email"]).exists():
-            return None, "A vendor with this email already exists."
-
-        user = User.objects.create(
-            phone_number=phone_number,
-            phone_country_code=data.get("phone_country_code", "+91"),
-            first_name=data["owner_name"],
-            email=data["email"],
+        conflict_user = (
+            User.objects.filter(Q(phone_number=phone_number) | Q(email__iexact=email))
+            .filter(
+                Q(role_assignments__role__system_role="VENDOR")
+                | Q(role_assignments__role__system_role__in=["SUPPORT", "SUPER_ADMIN"])
+            )
+            .exclude(id=existing_user_id if existing_user_id else -1)
+            .first()
         )
+        if conflict_user is not None:
+            return (
+                None,
+                "This phone number or email already belongs to a vendor or staff account.",
+            )
+
+        if existing_user_id:
+            user = User.objects.filter(id=existing_user_id).first()
+            if user is None:
+                return None, "Selected customer account not found."
+            if user.phone_number != phone_number:
+                return None, "Phone number does not match the selected account."
+        else:
+            if User.objects.filter(phone_number=phone_number).exists():
+                return None, "A user with this phone number already exists."
+            if User.objects.filter(email__iexact=email).exists():
+                return None, "A user with this email already exists."
+            user = User.objects.create(
+                phone_number=phone_number,
+                phone_country_code=data.get("phone_country_code", "+91"),
+                first_name=data["owner_name"],
+                email=email,
+            )
+
         user.set_password(data["password"])
         user.save()
+
+        if Vendor.objects.filter(email__iexact=email).exists():
+            return None, "A vendor with this email already exists."
 
         role, _ = Role.objects.get_or_create(
             system_role=Role.SystemRole.VENDOR,
@@ -421,14 +449,10 @@ class AdminVendorRegistrationService:
             user=user,
             business_name=data["business_name"],
             owner_name=data["owner_name"],
-            email=data["email"],
+            email=email,
             phone_number=phone_number,
             address=data["address"],
             gst_number=data.get("gst_number", ""),
-            # Approved immediately, not PENDING — admin filling this
-            # form in and vetting the details themselves already IS
-            # the review step, so there's no separate approval queue
-            # for vendors created this way.
             status=Vendor.Status.APPROVED,
             reviewed_by=admin_user,
             reviewed_at=timezone.now(),

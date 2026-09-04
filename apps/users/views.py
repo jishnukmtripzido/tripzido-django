@@ -7,11 +7,11 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework import status
 import random
 import json
+from django.db.models import Q
 import requests
 from django.core.cache import cache
 from django.conf import settings
 from drf_spectacular.utils import extend_schema
-
 from apps.users.models import User
 from apps.core.responses import success_response, error_response
 from apps.core.permissions import IsStaffRole
@@ -646,9 +646,11 @@ class AdminStaffListCreateView(GenericAPIView):
                 errors=serializer.errors,
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        assignment = AdminUserService.create_staff(
+        assignment, error = AdminUserService.create_staff(
             serializer.validated_data, request.user
         )
+        if assignment is None:
+            return error_response(message=error, status=status.HTTP_409_CONFLICT)
         return success_response(
             data={
                 "assignment_id": assignment.id,
@@ -996,5 +998,81 @@ class StaffForgotPasswordResetView(APIView):
                 "access_token": str(refresh.access_token),
                 "refresh_token": str(refresh),
             },
+            status=status.HTTP_200_OK,
+        )
+
+
+class AdminUserLookupView(APIView):
+    """
+    GET /api/users/admin/lookup/?phone_number=&email=
+    Shared pre-check used before registering a NEW vendor or staff
+    member. VENDOR and staff roles are mutually exclusive on one
+    login; a plain customer (no privileged role) is always eligible
+    to be upgraded into either, but only after explicit confirmation
+    from whoever's registering them — this endpoint never creates or
+    changes anything, purely a lookup.
+    """
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+
+    def get(self, request):
+        phone_number = request.query_params.get("phone_number", "").strip()
+        email = request.query_params.get("email", "").strip()
+
+        if not phone_number and not email:
+            return error_response(
+                message="Provide at least a phone number or email to check.",
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        filter_q = Q()
+        if phone_number:
+            filter_q |= Q(phone_number=phone_number)
+        if email:
+            filter_q |= Q(email__iexact=email)
+
+        user = User.objects.filter(filter_q).first()
+
+        if user is None:
+            return success_response(
+                data={"status": "not_found"},
+                message="No existing account found.",
+                status=status.HTTP_200_OK,
+            )
+
+        if user.has_role("VENDOR"):
+            return success_response(
+                data={
+                    "status": "blocked",
+                    "reason": "This phone number or email already belongs to a vendor account.",
+                    "conflicting_role": "VENDOR",
+                },
+                message="Blocked.",
+                status=status.HTTP_200_OK,
+            )
+
+        if user.has_role("SUPPORT") or user.has_role("SUPER_ADMIN"):
+            return success_response(
+                data={
+                    "status": "blocked",
+                    "reason": "This phone number or email already belongs to a staff/admin account.",
+                    "conflicting_role": "STAFF",
+                },
+                message="Blocked.",
+                status=status.HTTP_200_OK,
+            )
+
+        return success_response(
+            data={
+                "status": "found_customer",
+                "user": {
+                    "id": user.id,
+                    "full_name": user.get_full_name(),
+                    "phone_number": user.phone_number,
+                    "email": user.email,
+                    "created_at": user.created_at,
+                },
+            },
+            message="Existing customer found.",
             status=status.HTTP_200_OK,
         )

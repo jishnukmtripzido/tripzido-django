@@ -12,12 +12,11 @@ from apps.core.pagination import CustomPagination
 
 class NotificationListView(GenericAPIView):
     """
-    GET /api/notifications/?unread_only=&page=
-    Scoped strictly to recipient=request.user — same IDOR-safe pattern
-    used throughout this project (vendor listing ownership, pickup
-    point ownership, etc.). Not additionally filtered by `portal`; see
-    the note in NotificationService about why that's safe given how
-    every write path already guarantees portal-correctness per user.
+    GET /api/notifications/?portal=&unread_only=&page=
+    Now also filtered by portal, not just recipient — a single login
+    can genuinely hold both a VENDOR and a SUPPORT/SUPER_ADMIN role at
+    once, which would otherwise leak admin notifications into the
+    vendor bell (and vice versa) for that account.
     """
 
     permission_classes = [IsAuthenticated]
@@ -26,6 +25,9 @@ class NotificationListView(GenericAPIView):
 
     def get(self, request):
         qs = Notification.objects.filter(recipient=request.user)
+        portal = request.query_params.get("portal")
+        if portal:
+            qs = qs.filter(portal=portal)
         if request.query_params.get("unread_only") in ("true", "1"):
             qs = qs.filter(is_read=False)
         page = self.paginate_queryset(qs)
@@ -39,16 +41,17 @@ class NotificationListView(GenericAPIView):
 
 
 class NotificationUnreadCountView(APIView):
-    """GET /api/notifications/unread-count/ — cheap, for the bell badge."""
+    """GET /api/notifications/unread-count/?portal="""
 
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        count = Notification.objects.filter(
-            recipient=request.user, is_read=False
-        ).count()
+        qs = Notification.objects.filter(recipient=request.user, is_read=False)
+        portal = request.query_params.get("portal")
+        if portal:
+            qs = qs.filter(portal=portal)
         return success_response(
-            data={"count": count},
+            data={"count": qs.count()},
             message="Unread count retrieved successfully",
             status=status.HTTP_200_OK,
         )

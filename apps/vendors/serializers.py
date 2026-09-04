@@ -290,7 +290,21 @@ class AdminSubscriptionPlanSerializer(serializers.ModelSerializer):
         ]
 
 
+# class AdminVendorRegistrationSerializer(serializers.Serializer):
+#     phone_number = serializers.CharField(max_length=15)
+#     phone_country_code = serializers.CharField(max_length=5, default="+91")
+#     email = serializers.EmailField()
+#     password = serializers.CharField(min_length=8, write_only=True)
+#     business_name = serializers.CharField(max_length=200)
+#     owner_name = serializers.CharField(max_length=200)
+#     address = serializers.CharField()
+#     gst_number = serializers.CharField(
+#         max_length=20, required=False, allow_blank=True, default=""
+#     )
+
+
 class AdminVendorRegistrationSerializer(serializers.Serializer):
+    existing_user_id = serializers.IntegerField(required=False, allow_null=True)
     phone_number = serializers.CharField(max_length=15)
     phone_country_code = serializers.CharField(max_length=5, default="+91")
     email = serializers.EmailField()

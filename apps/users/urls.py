@@ -1,6 +1,7 @@
 from django.urls import path
 from apps.users.views import (
     AdminStaffPasswordResetView,
+    AdminUserLookupView,
     SendOTPView,
     OTPVerifyAndTokenView,
     LogoutView,
@@ -84,4 +85,5 @@ urlpatterns = [
         StaffForgotPasswordResetView.as_view(),
         name="staff-forgot-password-reset",
     ),
+    path("admin/lookup/", AdminUserLookupView.as_view(), name="admin-user-lookup"),
 ]
