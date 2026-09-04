@@ -9,6 +9,7 @@ from apps.payments.repositories import (
     AdminVendorPayoutRepository,
     VendorPayoutRepository,
 )
+from apps.logs.services import ActivityLogService
 
 
 class VendorPayoutService:
@@ -74,6 +75,17 @@ class AdminVendorPayoutService:
                 link=f"/ledger/detail?id={payout.id}",
             )
 
+        actor_role = "SUPER_ADMIN" if admin_user.has_role("SUPER_ADMIN") else "SUPPORT"
+        ActivityLogService.log(
+            actor=admin_user,
+            actor_role=actor_role,
+            action=f"PAYOUT_{target_status}",
+            target_model="VendorPayout",
+            target_id=payout.id,
+            target_label=f"₹{payout.total_amount} to {payout.vendor.business_name}",
+            description=note,
+            metadata={"utr_number": utr_number} if utr_number else {},
+        )
         return payout, None
 
 
@@ -142,4 +154,16 @@ class AdminRefundService:
 
         refund.status = target_status
         refund.save()
+
+        actor_role = "SUPER_ADMIN" if admin_user.has_role("SUPER_ADMIN") else "SUPPORT"
+        ActivityLogService.log(
+            actor=admin_user,
+            actor_role=actor_role,
+            action=f"REFUND_{target_status}",
+            target_model="RefundRecord",
+            target_id=refund.id,
+            target_label=f"₹{refund.amount} refund",
+            description=note,
+        )
+
         return refund, None

@@ -764,6 +764,17 @@ class CancellationService:
         booking.cancelled_by_role = cancelled_by_role
         booking.save(update_fields=["status", "cancelled_at", "cancelled_by_role"])
 
+        vehicle_label = f"{booking.listing.vehicle_type.brand.name} {booking.listing.vehicle_type.name}"
+        ActivityLogService.log(
+            actor=cancelled_by_user,
+            actor_role=cancelled_by_role,
+            action="BOOKING_CANCELLED",
+            target_model="Booking",
+            target_id=booking.id,
+            target_label=f"{vehicle_label} ({booking.booking_reference})",
+            description=reason_text,
+        )
+
         return cancellation
 
     @staticmethod

@@ -504,17 +504,34 @@ class StaffLoginView(APIView):
             or not user.has_usable_password()
             or not user.check_password(password)
         ):
+            LoginLogService.record(
+                "ADMIN",
+                email,
+                False,
+                user=user,
+                failure_reason="invalid_credentials",
+                request=request,
+            )
             return error_response(
                 message="Invalid email or password.",
                 status=status.HTTP_401_UNAUTHORIZED,
             )
 
         if not (user.has_role("SUPER_ADMIN") or user.has_role("SUPPORT")):
+            LoginLogService.record(
+                "ADMIN",
+                email,
+                False,
+                user=user,
+                failure_reason="not_staff",
+                request=request,
+            )
             return error_response(
                 message="This account does not have admin access.",
                 status=status.HTTP_403_FORBIDDEN,
             )
 
+        LoginLogService.record("ADMIN", email, True, user=user, request=request)
         refresh = RefreshToken.for_user(user)
         role = "SUPER_ADMIN" if user.has_role("SUPER_ADMIN") else "SUPPORT"
 
@@ -690,6 +707,9 @@ class AdminStaffDetailView(GenericAPIView):
         )
 
 
+from apps.logs.services import LoginLogService
+
+
 class VendorPasswordLoginView(APIView):
     """
     POST /api/users/vendor/login/
@@ -716,29 +736,61 @@ class VendorPasswordLoginView(APIView):
 
         user = UserService.get_user_by_phone(local_number)
         if user is None:
+            LoginLogService.record(
+                "VENDOR",
+                phone_number,
+                False,
+                failure_reason="not_found",
+                request=request,
+            )
             return error_response(
                 message="Invalid phone number or password.",
                 status=status.HTTP_401_UNAUTHORIZED,
             )
 
         if not user.has_role("VENDOR"):
+            LoginLogService.record(
+                "VENDOR",
+                phone_number,
+                False,
+                user=user,
+                failure_reason="not_vendor",
+                request=request,
+            )
             return error_response(
                 message="This phone number is not registered as a vendor account.",
                 status=status.HTTP_403_FORBIDDEN,
             )
 
         if not user.has_usable_password():
+            LoginLogService.record(
+                "VENDOR",
+                phone_number,
+                False,
+                user=user,
+                failure_reason="no_password_set",
+                request=request,
+            )
             return error_response(
                 message="No password set for this account yet. Use 'Forgot password' to set one.",
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         if not user.check_password(password):
+            LoginLogService.record(
+                "VENDOR",
+                phone_number,
+                False,
+                user=user,
+                failure_reason="wrong_password",
+                request=request,
+            )
             return error_response(
                 message="Invalid phone number or password.",
                 status=status.HTTP_401_UNAUTHORIZED,
             )
 
+        LoginLogService.record("VENDOR", phone_number, True, user=user, request=request)
         refresh = RefreshToken.for_user(user)
         return success_response(
             message="Login successful",
