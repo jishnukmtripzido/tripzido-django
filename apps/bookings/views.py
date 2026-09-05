@@ -56,6 +56,7 @@ from apps.bookings.models import Booking, BookingCancellation
 from apps.core.pagination import CustomPagination
 from apps.core.permissions import IsStaffRole
 from apps.core.responses import error_response, success_response
+from apps.core.utils import parse_client_datetime
 
 logger = logging.getLogger(__name__)
 
@@ -80,9 +81,18 @@ class CreateBookingOrderView(GenericAPIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # try:
+        #     pickup_dt = datetime.fromisoformat(data["pickup_datetime"])
+        #     dropoff_dt = datetime.fromisoformat(data["dropoff_datetime"])
+        #     quantity = int(data["quantity"])
+        # except (ValueError, TypeError):
+        #     return error_response(
+        #         message="Invalid date or quantity format",
+        #         status=status.HTTP_400_BAD_REQUEST,
+        #     )
         try:
-            pickup_dt = datetime.fromisoformat(data["pickup_datetime"])
-            dropoff_dt = datetime.fromisoformat(data["dropoff_datetime"])
+            pickup_dt = parse_client_datetime(data["pickup_datetime"])
+            dropoff_dt = parse_client_datetime(data["dropoff_datetime"])
             quantity = int(data["quantity"])
         except (ValueError, TypeError):
             return error_response(

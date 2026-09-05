@@ -240,6 +240,16 @@ class AvailabilityRepository:
     ) -> dict[int, int]:
         from apps.bookings.models import Booking
 
+        # Normalize both search-side datetimes to aware up front — every
+        # comparison below is then unambiguously aware-vs-aware, with no
+        # conditional branch and no silent naive-vs-naive fallback path
+        # that could compare two differently-intended "naive" values
+        # without anyone noticing.
+        if timezone.is_naive(pickup_dt):
+            pickup_dt = timezone.make_aware(pickup_dt)
+        if timezone.is_naive(dropoff_dt):
+            dropoff_dt = timezone.make_aware(dropoff_dt)
+
         candidates = (
             Booking.objects.filter(
                 listing_id__in=listing_ids,
@@ -264,14 +274,13 @@ class AvailabilityRepository:
 
         counts: dict[int, int] = {}
         for listing_id, p_date, p_time, d_date, d_time in candidates:
-            booking_pickup = datetime.combine(p_date, p_time)
-            booking_dropoff = datetime.combine(d_date, d_time)
-
-            # FIX: Ensure timezone alignment before comparison
-            if timezone.is_aware(pickup_dt) and timezone.is_naive(booking_pickup):
-                # Uses your Django settings.TIME_ZONE to make the naive datetimes aware
-                booking_pickup = timezone.make_aware(booking_pickup)
-                booking_dropoff = timezone.make_aware(booking_dropoff)
+            # Always made aware, unconditionally — same reasoning as the
+            # serializer fix: pickup_date/pickup_time are plain DateField/
+            # TimeField with no timezone concept of their own, but they're
+            # intended to represent Asia/Kolkata wall-clock moments,
+            # matching TIME_ZONE.
+            booking_pickup = timezone.make_aware(datetime.combine(p_date, p_time))
+            booking_dropoff = timezone.make_aware(datetime.combine(d_date, d_time))
 
             if booking_pickup < dropoff_dt and booking_dropoff > pickup_dt:
                 counts[listing_id] = counts.get(listing_id, 0) + 1

@@ -25,6 +25,7 @@ from apps.vehicles.utils import format_duration
 from apps.vehicles.models import VehicleListing
 from apps.notifications.services import NotificationService
 from apps.notifications.models import Notification
+from apps.core.utils import parse_client_datetime
 
 
 class AvailabilityService:
@@ -563,10 +564,14 @@ class VehicleDetailService:
             is_available = False
             availability_message = "This vehicle is sold out at this location"
 
+        # if pickup_str and dropoff_str:
+        #     availability_checked = True
+        #     pickup_dt = datetime.fromisoformat(pickup_str)
+        #     dropoff_dt = datetime.fromisoformat(dropoff_str)
         if pickup_str and dropoff_str:
             availability_checked = True
-            pickup_dt = datetime.fromisoformat(pickup_str)
-            dropoff_dt = datetime.fromisoformat(dropoff_str)
+            pickup_dt = parse_client_datetime(pickup_str)
+            dropoff_dt = parse_client_datetime(dropoff_str)
 
             # Only run the schedule check if not already blocked by
             # having zero total fleet — that's true regardless of dates.

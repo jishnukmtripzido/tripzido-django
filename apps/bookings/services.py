@@ -557,9 +557,9 @@ class CancellationService:
     def _hours_until_pickup(booking) -> Decimal:
         from datetime import datetime
 
-        pickup_dt = datetime.combine(booking.pickup_date, booking.pickup_time)
-        if timezone.is_aware(timezone.now()):
-            pickup_dt = timezone.make_aware(pickup_dt)
+        pickup_dt = timezone.make_aware(
+            datetime.combine(booking.pickup_date, booking.pickup_time)
+        )
 
         delta = pickup_dt - timezone.now()
         hours = Decimal(delta.total_seconds()) / Decimal(3600)

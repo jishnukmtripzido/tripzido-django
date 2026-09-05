@@ -5,6 +5,7 @@ from apps.bookings.models import Booking, BookingCancellation
 from apps.payments.models import Payment
 from apps.vendors.models import VendorTerms
 from apps.vehicles.models import ReviewRating
+from django.utils import timezone
 
 # ── List view (BookingsList.tsx card) ──────────────────────────────────
 
@@ -56,19 +57,27 @@ class BookingListSerializer(serializers.ModelSerializer):
     def get_start_date(self, booking):
         from datetime import datetime
 
-        return datetime.combine(booking.pickup_date, booking.pickup_time).isoformat()
+        return timezone.make_aware(
+            datetime.combine(booking.pickup_date, booking.pickup_time)
+        ).isoformat()
 
     def get_end_date(self, booking):
         from datetime import datetime
 
-        return datetime.combine(booking.dropoff_date, booking.dropoff_time).isoformat()
+        return timezone.make_aware(
+            datetime.combine(booking.dropoff_date, booking.dropoff_time)
+        ).isoformat()
 
     def get_duration(self, booking):
         from apps.vehicles.utils import format_duration
         from datetime import datetime
 
-        pickup = datetime.combine(booking.pickup_date, booking.pickup_time)
-        dropoff = datetime.combine(booking.dropoff_date, booking.dropoff_time)
+        pickup = timezone.make_aware(
+            datetime.combine(booking.pickup_date, booking.pickup_time)
+        )
+        dropoff = timezone.make_aware(
+            datetime.combine(booking.dropoff_date, booking.dropoff_time)
+        )
         hours = (dropoff - pickup).total_seconds() / 3600
         return format_duration(hours)
 
@@ -291,19 +300,27 @@ class BookingDetailSerializer(serializers.ModelSerializer):
     def get_start_date(self, booking):
         from datetime import datetime
 
-        return datetime.combine(booking.pickup_date, booking.pickup_time).isoformat()
+        return timezone.make_aware(
+            datetime.combine(booking.pickup_date, booking.pickup_time)
+        ).isoformat()
 
     def get_end_date(self, booking):
         from datetime import datetime
 
-        return datetime.combine(booking.dropoff_date, booking.dropoff_time).isoformat()
+        return timezone.make_aware(
+            datetime.combine(booking.dropoff_date, booking.dropoff_time)
+        ).isoformat()
 
     def get_duration(self, booking):
         from apps.vehicles.utils import format_duration
         from datetime import datetime
 
-        pickup = datetime.combine(booking.pickup_date, booking.pickup_time)
-        dropoff = datetime.combine(booking.dropoff_date, booking.dropoff_time)
+        pickup = timezone.make_aware(
+            datetime.combine(booking.pickup_date, booking.pickup_time)
+        )
+        dropoff = timezone.make_aware(
+            datetime.combine(booking.dropoff_date, booking.dropoff_time)
+        )
         hours = (dropoff - pickup).total_seconds() / 3600
         return format_duration(hours)
 
@@ -450,19 +467,27 @@ class BookingConfirmationItemSerializer(serializers.ModelSerializer):
     def get_start_date(self, booking):
         from datetime import datetime
 
-        return datetime.combine(booking.pickup_date, booking.pickup_time).isoformat()
+        return timezone.make_aware(
+            datetime.combine(booking.pickup_date, booking.pickup_time)
+        ).isoformat()
 
     def get_end_date(self, booking):
         from datetime import datetime
 
-        return datetime.combine(booking.dropoff_date, booking.dropoff_time).isoformat()
+        return timezone.make_aware(
+            datetime.combine(booking.dropoff_date, booking.dropoff_time)
+        ).isoformat()
 
     def get_duration(self, booking):
         from apps.vehicles.utils import format_duration
         from datetime import datetime
 
-        pickup = datetime.combine(booking.pickup_date, booking.pickup_time)
-        dropoff = datetime.combine(booking.dropoff_date, booking.dropoff_time)
+        pickup = timezone.make_aware(
+            datetime.combine(booking.pickup_date, booking.pickup_time)
+        )
+        dropoff = timezone.make_aware(
+            datetime.combine(booking.dropoff_date, booking.dropoff_time)
+        )
         hours = (dropoff - pickup).total_seconds() / 3600
         return format_duration(hours)
 
@@ -547,19 +572,27 @@ class VendorBookingListSerializer(serializers.ModelSerializer):
     def get_start_date(self, booking):
         from datetime import datetime
 
-        return datetime.combine(booking.pickup_date, booking.pickup_time).isoformat()
+        return timezone.make_aware(
+            datetime.combine(booking.pickup_date, booking.pickup_time)
+        ).isoformat()
 
     def get_end_date(self, booking):
         from datetime import datetime
 
-        return datetime.combine(booking.dropoff_date, booking.dropoff_time).isoformat()
+        return timezone.make_aware(
+            datetime.combine(booking.dropoff_date, booking.dropoff_time)
+        ).isoformat()
 
     def get_duration(self, booking):
         from apps.vehicles.utils import format_duration
         from datetime import datetime
 
-        pickup = datetime.combine(booking.pickup_date, booking.pickup_time)
-        dropoff = datetime.combine(booking.dropoff_date, booking.dropoff_time)
+        pickup = timezone.make_aware(
+            datetime.combine(booking.pickup_date, booking.pickup_time)
+        )
+        dropoff = timezone.make_aware(
+            datetime.combine(booking.dropoff_date, booking.dropoff_time)
+        )
         hours = (dropoff - pickup).total_seconds() / 3600
         return format_duration(hours)
 
@@ -644,19 +677,27 @@ class VendorBookingDetailSerializer(serializers.ModelSerializer):
     def get_start_date(self, booking):
         from datetime import datetime
 
-        return datetime.combine(booking.pickup_date, booking.pickup_time).isoformat()
+        return timezone.make_aware(
+            datetime.combine(booking.pickup_date, booking.pickup_time)
+        ).isoformat()
 
     def get_end_date(self, booking):
         from datetime import datetime
 
-        return datetime.combine(booking.dropoff_date, booking.dropoff_time).isoformat()
+        return timezone.make_aware(
+            datetime.combine(booking.dropoff_date, booking.dropoff_time)
+        ).isoformat()
 
     def get_duration(self, booking):
         from apps.vehicles.utils import format_duration
         from datetime import datetime
 
-        pickup = datetime.combine(booking.pickup_date, booking.pickup_time)
-        dropoff = datetime.combine(booking.dropoff_date, booking.dropoff_time)
+        pickup = timezone.make_aware(
+            datetime.combine(booking.pickup_date, booking.pickup_time)
+        )
+        dropoff = timezone.make_aware(
+            datetime.combine(booking.dropoff_date, booking.dropoff_time)
+        )
         hours = (dropoff - pickup).total_seconds() / 3600
         return format_duration(hours)
 
