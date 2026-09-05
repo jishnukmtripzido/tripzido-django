@@ -36,6 +36,7 @@ from django.utils import timezone
 from apps.payments.models import Payment
 from apps.notifications.services import NotificationService
 from apps.notifications.models import Notification
+from apps.logs.services import ActivityLogService
 
 
 def _generate_booking_reference() -> str:
