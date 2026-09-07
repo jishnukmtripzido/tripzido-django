@@ -678,11 +678,26 @@ class VehicleDetailService:
         terms = VehicleDetailService._get_current_terms(listing)
         operating_hours = VehicleDetailService._build_operating_hours(listing)
 
-        images = listing.images.all()
-        image_urls = [
-            VehicleDetailService._absolute_url(request, img.image) for img in images
-        ]
+        # images = listing.images.all()
+        # image_urls = [
+        #     VehicleDetailService._absolute_url(request, img.image) for img in images
+        # ]
+        # primary_image = VehicleDetailService._absolute_url(request, vt.primary_image)
+
         primary_image = VehicleDetailService._absolute_url(request, vt.primary_image)
+
+        # Build image list: VehicleType catalogue image first, then vendor-uploaded
+        # listing images. The frontend uses images[0] as the default displayed image,
+        # so putting the catalogue image first guarantees it's always the default.
+        listing_image_urls = [
+            VehicleDetailService._absolute_url(request, img.image)
+            for img in listing.images.all()
+        ]
+        image_urls = (
+            [primary_image] + listing_image_urls
+            if primary_image
+            else listing_image_urls
+        )
 
         # ── Duration-aware package matching ──────────────────────────
         all_packages = list(listing.pricing_packages.all())

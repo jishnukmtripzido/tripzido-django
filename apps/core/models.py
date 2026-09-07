@@ -3,6 +3,7 @@ from django.db import models
 from django.conf import settings
 from django.utils import timezone
 from django.contrib.auth.models import PermissionsMixin, AbstractBaseUser
+from apps.core.audit import get_current_actor
 
 
 class SoftDeleteManager(models.Manager):
@@ -88,11 +89,27 @@ class SoftDeleteModel(models.Model):
     def is_deleted(self):
         """
         Check whether this object has been soft-deleted.
-
-        Returns:
-            bool: True if the object is soft-deleted, False otherwise.
         """
         return not self.is_active
+
+
+class AuditQuerySet(models.QuerySet):
+    def update(self, **kwargs):
+        actor = get_current_actor()
+        if actor is not None and "last_updated_by" not in kwargs:
+            kwargs["last_updated_by"] = actor
+        return super().update(**kwargs)
+
+
+class AuditManager(SoftDeleteManager.from_queryset(AuditQuerySet)):
+    def bulk_create(self, objs, **kwargs):
+        actor = get_current_actor()
+        if actor is not None:
+            for obj in objs:
+                if obj.created_by_id is None:
+                    obj.created_by = actor
+                obj.last_updated_by = actor
+        return super().bulk_create(objs, **kwargs)
 
 
 class BaseModel(SoftDeleteModel):
@@ -118,6 +135,23 @@ class BaseModel(SoftDeleteModel):
         on_delete=models.PROTECT,
         related_name="%(class)s_last_updated_by",
     )
+
+    objects = AuditManager()
+
+    def save(self, *args, **kwargs):
+        actor = get_current_actor()
+        if actor is not None:
+            if self._state.adding and self.created_by_id is None:
+                self.created_by = actor
+            self.last_updated_by = actor
+
+            update_fields = kwargs.get("update_fields")
+            if update_fields is not None:
+                kwargs["update_fields"] = set(update_fields) | {"last_updated_by"}
+                if self._state.adding and self.created_by_id is not None:
+                    kwargs["update_fields"].add("created_by")
+
+        return super().save(*args, **kwargs)
 
     class Meta:
         abstract = True
