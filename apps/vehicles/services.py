@@ -261,7 +261,128 @@ class AvailabilityService:
         return result
 
 
+# class VehicleSearchService:
+
+#     @staticmethod
+#     def search(
+#         city_id: int,
+#         pickup_datetime: datetime,
+#         dropoff_datetime: datetime,
+#         vehicle_type_id: int | None = None,
+#     ):
+#         candidate_ids = VehicleSearchRepository.get_candidate_listing_ids(
+#             city_id, vehicle_type_id=vehicle_type_id
+#         )
+
+#         available_ids = AvailabilityService.filter_available_listing_ids(
+#             listing_ids=candidate_ids,
+#             pickup_dt=pickup_datetime,
+#             dropoff_dt=dropoff_datetime,
+#         )
+
+#         if not available_ids:
+#             return []
+
+#         duration_hours = AvailabilityService.compute_duration_hours(
+#             pickup_datetime, dropoff_datetime
+#         )
+
+#         matched = AvailabilityService.pick_package_for_listings(
+#             available_ids, duration_hours
+#         )
+
+#         final_ids = [lid for lid in available_ids if lid in matched]
+
+#         active_listings = VehicleSearchRepository.get_listings_by_ids(final_ids)
+#         vehicle_types = list(
+#             VehicleSearchRepository.get_vehicle_types_for_listings(active_listings)
+#         )
+
+#         listings_by_id = {l.id: l for vt in vehicle_types for l in vt.city_listings}
+#         booked_counts = AvailabilityRepository.get_booked_counts_for_listings(
+#             list(listings_by_id.keys()), pickup_datetime, dropoff_datetime
+#         )
+#         blocked_counts = AvailabilityRepository.get_blocked_counts_for_listings(
+#             list(listings_by_id.keys()), pickup_datetime, dropoff_datetime
+#         )
+#         for listing_id, listing in listings_by_id.items():
+#             pkg, multiplier = matched[listing_id]
+#             listing.matched_package = pkg
+#             pkg.matched_multiplier = multiplier
+#             pkg.searched_duration_hours = duration_hours
+#             committed = booked_counts.get(listing_id, 0) + blocked_counts.get(
+#                 listing_id, 0
+#             )
+#             # Overwrite with remaining-for-these-dates so the frontend's
+#             # "X available" badge and sold-out check reflect THIS
+#             # search, not the listing's static total fleet size.
+#             listing.available_count = max(0, listing.available_count - committed)
+
+#         # ── Split VehicleType objects by vendor ───────────────────────
+#         # The default grouping puts all vendors' listings for the same
+#         # vehicle model under one VehicleType object. We instead want
+#         # one VehicleType-like object per (vehicle_type, vendor) pair so
+#         # the frontend renders a separate card per vendor.
+#         #
+#         # We create lightweight proxy objects by copying the VehicleType
+#         # and attaching only the listings that belong to a single vendor.
+#         # The serializer (VehicleSearchResultSerializer) reads
+#         # vt.city_listings, so as long as we set that attribute the
+#         # existing serializer works without any changes.
+#         from copy import copy
+
+#         split_vehicle_types = []
+#         for vt in vehicle_types:
+#             # Group this VehicleType's listings by vendor_id.
+#             by_vendor: dict[int, list] = {}
+#             for listing in vt.city_listings:
+#                 by_vendor.setdefault(listing.vendor_id, []).append(listing)
+
+#             for vendor_listings in by_vendor.values():
+#                 vt_copy = copy(vt)
+#                 vt_copy.city_listings = vendor_listings
+#                 split_vehicle_types.append(vt_copy)
+
+#         # ── Sort: sold-out cards last, same as before ─────────────────
+#         # for vt in split_vehicle_types:
+#         #     vt.city_listings.sort(key=lambda l: l.available_count <= 0)
+
+#         # split_vehicle_types.sort(
+#         #     key=lambda vt: all(l.available_count <= 0 for l in vt.city_listings)
+#         # )
+
+#         # ── Sort listings within each card: cheapest-available first, sold-out last ──
+#         for vt in split_vehicle_types:
+#             vt.city_listings.sort(
+#                 key=lambda l: (
+#                     l.available_count <= 0,
+#                     (
+#                         l.matched_package.price * l.matched_package.matched_multiplier
+#                         if l.available_count > 0
+#                         else Decimal("0")
+#                     ),
+#                 )
+#             )
+
+#         # ── Sort cards: all-sold-out last, then cheapest-available-price first ──
+#         def _card_sort_key(vt):
+#             available = [l for l in vt.city_listings if l.available_count > 0]
+#             if not available:
+#                 return (1, Decimal("0"))
+#             cheapest = min(
+#                 l.matched_package.price * l.matched_package.matched_multiplier
+#                 for l in available
+#             )
+#             return (0, cheapest)
+
+#         split_vehicle_types.sort(key=_card_sort_key)
+
+#         return split_vehicle_types
+
+
 class VehicleSearchService:
+
+    PAGE_SIZE = 12  # cards per page — tune as needed
 
     @staticmethod
     def search(
@@ -269,11 +390,29 @@ class VehicleSearchService:
         pickup_datetime: datetime,
         dropoff_datetime: datetime,
         vehicle_type_id: int | None = None,
-    ):
+        page: int = 1,
+    ) -> dict:
+        """
+        Returns a dict:
+        {
+            "results":     [VehicleType proxy objects],  # serialised by the view
+            "total":       int,
+            "page":        int,
+            "page_size":   int,
+            "total_pages": int,
+            "has_next":    bool,
+        }
+        All availability work is done on the full candidate set first
+        (unavoidable — we must know every available listing before we
+        can sort by price). Pagination then slices the sorted result
+        list so the serialiser only touches PAGE_SIZE objects.
+        """
+        # ── 1. Candidate listing IDs (DB) ────────────────────────────
         candidate_ids = VehicleSearchRepository.get_candidate_listing_ids(
             city_id, vehicle_type_id=vehicle_type_id
         )
 
+        # ── 2. Availability filter (DB) ──────────────────────────────
         available_ids = AvailabilityService.filter_available_listing_ids(
             listing_ids=candidate_ids,
             pickup_dt=pickup_datetime,
@@ -281,23 +420,31 @@ class VehicleSearchService:
         )
 
         if not available_ids:
-            return []
+            return {
+                "results": [],
+                "total": 0,
+                "page": page,
+                "page_size": VehicleSearchService.PAGE_SIZE,
+                "total_pages": 0,
+                "has_next": False,
+            }
 
+        # ── 3. Package matching (DB) ─────────────────────────────────
         duration_hours = AvailabilityService.compute_duration_hours(
             pickup_datetime, dropoff_datetime
         )
-
         matched = AvailabilityService.pick_package_for_listings(
             available_ids, duration_hours
         )
-
         final_ids = [lid for lid in available_ids if lid in matched]
 
+        # ── 4. Full listing + vehicle-type fetch (DB) ─────────────────
         active_listings = VehicleSearchRepository.get_listings_by_ids(final_ids)
         vehicle_types = list(
             VehicleSearchRepository.get_vehicle_types_for_listings(active_listings)
         )
 
+        # ── 5. Capacity decoration (DB – 2 queries) ──────────────────
         listings_by_id = {l.id: l for vt in vehicle_types for l in vt.city_listings}
         booked_counts = AvailabilityRepository.get_booked_counts_for_listings(
             list(listings_by_id.keys()), pickup_datetime, dropoff_datetime
@@ -313,45 +460,22 @@ class VehicleSearchService:
             committed = booked_counts.get(listing_id, 0) + blocked_counts.get(
                 listing_id, 0
             )
-            # Overwrite with remaining-for-these-dates so the frontend's
-            # "X available" badge and sold-out check reflect THIS
-            # search, not the listing's static total fleet size.
             listing.available_count = max(0, listing.available_count - committed)
 
-        # ── Split VehicleType objects by vendor ───────────────────────
-        # The default grouping puts all vendors' listings for the same
-        # vehicle model under one VehicleType object. We instead want
-        # one VehicleType-like object per (vehicle_type, vendor) pair so
-        # the frontend renders a separate card per vendor.
-        #
-        # We create lightweight proxy objects by copying the VehicleType
-        # and attaching only the listings that belong to a single vendor.
-        # The serializer (VehicleSearchResultSerializer) reads
-        # vt.city_listings, so as long as we set that attribute the
-        # existing serializer works without any changes.
+        # ── 6. Split by vendor ────────────────────────────────────────
         from copy import copy
 
         split_vehicle_types = []
         for vt in vehicle_types:
-            # Group this VehicleType's listings by vendor_id.
             by_vendor: dict[int, list] = {}
             for listing in vt.city_listings:
                 by_vendor.setdefault(listing.vendor_id, []).append(listing)
-
             for vendor_listings in by_vendor.values():
                 vt_copy = copy(vt)
                 vt_copy.city_listings = vendor_listings
                 split_vehicle_types.append(vt_copy)
 
-        # ── Sort: sold-out cards last, same as before ─────────────────
-        # for vt in split_vehicle_types:
-        #     vt.city_listings.sort(key=lambda l: l.available_count <= 0)
-
-        # split_vehicle_types.sort(
-        #     key=lambda vt: all(l.available_count <= 0 for l in vt.city_listings)
-        # )
-
-        # ── Sort listings within each card: cheapest-available first, sold-out last ──
+        # ── 7. Sort within each card, then sort cards ─────────────────
         for vt in split_vehicle_types:
             vt.city_listings.sort(
                 key=lambda l: (
@@ -364,7 +488,6 @@ class VehicleSearchService:
                 )
             )
 
-        # ── Sort cards: all-sold-out last, then cheapest-available-price first ──
         def _card_sort_key(vt):
             available = [l for l in vt.city_listings if l.available_count > 0]
             if not available:
@@ -377,7 +500,23 @@ class VehicleSearchService:
 
         split_vehicle_types.sort(key=_card_sort_key)
 
-        return split_vehicle_types
+        # ── 8. Paginate the sorted Python list ───────────────────────
+        total = len(split_vehicle_types)
+        page_size = VehicleSearchService.PAGE_SIZE
+        total_pages = max(1, (total + page_size - 1) // page_size)
+        page = max(1, min(page, total_pages))  # clamp to valid range
+        start = (page - 1) * page_size
+        end = start + page_size
+        page_results = split_vehicle_types[start:end]
+
+        return {
+            "results": page_results,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "total_pages": total_pages,
+            "has_next": page < total_pages,
+        }
 
 
 class VehicleDetailService:
