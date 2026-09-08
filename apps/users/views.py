@@ -5,7 +5,6 @@ from rest_framework.generics import GenericAPIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework import status
-import random
 import json
 from django.db.models import Q
 import requests
@@ -16,7 +15,7 @@ from apps.users.models import User
 from apps.core.responses import success_response, error_response
 from apps.core.permissions import IsStaffRole
 from apps.core.pagination import CustomPagination
-from .services import UserService, AdminUserService
+from .services import OTPService, UserService, AdminUserService
 from .serializers import (
     AdminStaffPasswordResetSerializer,
     SendOTPSerializer,
@@ -41,8 +40,27 @@ from .tasks import send_otp_email, send_otp_sms
 from .repositories import normalize_phone
 
 
+def _client_ip(request):
+    return request.META.get("REMOTE_ADDR") or "unknown"
+
+
+def _otp_error(reason):
+    if reason == "cooldown":
+        message = "Please wait before requesting another code."
+    elif reason == "rate_limited":
+        message = "Too many OTP requests. Please try again later."
+    elif reason == "locked":
+        message = "Too many attempts. Please request a new code later."
+    else:
+        message = "Unable to process OTP request. Please try again later."
+    return error_response(
+        message=message, errors={}, status=status.HTTP_429_TOO_MANY_REQUESTS
+    )
+
+
 class SendOTPView(APIView):
     permission_classes = [AllowAny]
+    otp_scope = "login"
 
     # Set on a subclass to restrict this endpoint to accounts holding a
     # specific role. Left None here so the existing customer-facing
@@ -120,11 +138,11 @@ class SendOTPView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        # otp = str(random.randint(1000, 9999))
-        otp = "1211"
-        print(f"Generated OTP for {local_number}: {otp}")  # Remove in production
-
-        cache.set(f"otp_{local_number}", otp, timeout=300)
+        otp, otp_error = OTPService.issue(
+            self.otp_scope, local_number, _client_ip(request)
+        )
+        if otp is None:
+            return _otp_error(otp_error)
         send_otp_sms.delay(phone_number, otp)
 
         return success_response(
@@ -139,6 +157,7 @@ class OTPVerifyAndTokenView(APIView):
 
     permission_classes = [AllowAny]
     required_role: str | None = None
+    otp_scope = "login"
 
     @extend_schema(
         request=VerifyOTPSerializer,
@@ -157,15 +176,19 @@ class OTPVerifyAndTokenView(APIView):
         otp = request.data.get("otp")
         local_number, _ = normalize_phone(phone_number)
 
-        cached_otp = cache.get(f"otp_{local_number}")
-        if cached_otp is None:
+        verified, verify_error = OTPService.verify(
+            self.otp_scope, local_number, otp, _client_ip(request)
+        )
+        if verify_error == "missing":
             return error_response(
                 message="OTP expired or not found. Please request a new one.",
                 errors={"otp": ["OTP not found or expired."]},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if str(cached_otp) != str(otp):
+        if verify_error in ("locked", "rate_limited"):
+            return _otp_error(verify_error)
+        if not verified:
             return error_response(
                 message="Invalid OTP. Please try again.",
                 errors={"otp": ["Incorrect OTP."]},
@@ -186,14 +209,12 @@ class OTPVerifyAndTokenView(APIView):
         # tokens to a non-vendor. Also consume the OTP on rejection so
         # a valid code isn't left sitting in cache for this number.
         if self.required_role and not user.has_role(self.required_role):
-            cache.delete(f"otp_{local_number}")
             return error_response(
                 message="This phone number is not registered as a vendor account.",
                 errors={"phone_number": ["No vendor account found for this number."]},
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        cache.delete(f"otp_{local_number}")
         refresh = RefreshToken.for_user(user)
 
         return success_response(
@@ -213,12 +234,14 @@ class VendorSendOTPView(SendOTPView):
     """POST /api/users/vendor/send-otp/"""
 
     required_role = "VENDOR"
+    otp_scope = "vendor_login"
 
 
 class VendorVerifyOTPView(OTPVerifyAndTokenView):
     """POST /api/users/vendor/verify-otp/"""
 
     required_role = "VENDOR"
+    otp_scope = "vendor_login"
 
 
 class LogoutView(APIView):
@@ -346,15 +369,17 @@ class RegisterSendOTPView(APIView):
             )
 
         # ── 3. Generate OTP ───────────────────────────────────────────────
-        otp = "1211"  # Hardcoded for testing
-        print(f"[DEBUG] Registration OTP for {local_number}: {otp}")  # Remove in prod
+        otp, otp_error = OTPService.issue(
+            "registration", local_number, _client_ip(request)
+        )
+        if otp is None:
+            return _otp_error(otp_error)
 
         # ── 4. Cache OTP + registration payload (no DB write) ─────────────
         #
         # Cache keys use local_number ("9876543210") — same format as DB.
         # country_code is stored in the payload so create_user can save it.
         # Both keys share the same 5-minute TTL.
-        cache.set(f"otp_{local_number}", otp, timeout=300)
         cache.set(
             f"reg_payload_{local_number}",
             json.dumps(
@@ -405,24 +430,23 @@ class RegisterVerifyOTPView(APIView):
         phone_number = serializer.validated_data["phone_number"]
         otp = serializer.validated_data["otp"]
 
-        print("i/p phone number and otp from registration", phone_number, otp)
-
         # Normalise — caller may send either format
         local_number, _ = normalize_phone(phone_number)
 
         # ── 1. OTP verification ───────────────────────────────────────────
-        cached_otp = cache.get(f"otp_{local_number}")
-
-        print("cached otp reg", cached_otp)
-        if cached_otp is None:
+        verified, verify_error = OTPService.verify(
+            "registration", local_number, otp, _client_ip(request)
+        )
+        if verify_error == "missing":
             return error_response(
                 message="OTP expired or not found. Please request a new one.",
                 errors={"otp": ["OTP not found or expired."]},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if str(cached_otp) != str(otp):
-            print("otp wrong")
+        if verify_error in ("locked", "rate_limited"):
+            return _otp_error(verify_error)
+        if not verified:
             return error_response(
                 message="Invalid OTP. Please try again.",
                 errors={"otp": ["Incorrect OTP."]},
@@ -455,7 +479,6 @@ class RegisterVerifyOTPView(APIView):
             )
 
         # ── 4. Consume both cache keys — no replay possible ───────────────
-        cache.delete(f"otp_{local_number}")
         cache.delete(f"reg_payload_{local_number}")
 
         # ── 5. Issue JWT tokens ───────────────────────────────────────────
@@ -842,9 +865,11 @@ class VendorForgotPasswordSendOTPView(APIView):
         if not vendor_email:
             return generic_response
 
-        # otp = str(random.randint(1000, 9999))
-        otp = 1211
-        cache.set(f"email_otp_{local_number}", otp, timeout=600)
+        otp, _ = OTPService.issue(
+            "vendor_password_reset", local_number, _client_ip(request)
+        )
+        if otp is None:
+            return generic_response
         send_otp_email.delay(vendor_email, otp)
 
         return generic_response
@@ -867,13 +892,17 @@ class VendorForgotPasswordResetView(APIView):
         data = serializer.validated_data
         local_number, _ = normalize_phone(data["phone_number"])
 
-        cached_otp = cache.get(f"email_otp_{local_number}")
-        if cached_otp is None:
+        verified, verify_error = OTPService.verify(
+            "vendor_password_reset", local_number, data["otp"], _client_ip(request)
+        )
+        if verify_error == "missing":
             return error_response(
                 message="Code expired or not found. Please request a new one.",
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        if str(cached_otp) != str(data["otp"]):
+        if verify_error in ("locked", "rate_limited"):
+            return _otp_error(verify_error)
+        if not verified:
             return error_response(
                 message="Invalid code. Please try again.",
                 status=status.HTTP_400_BAD_REQUEST,
@@ -881,7 +910,6 @@ class VendorForgotPasswordResetView(APIView):
 
         user = UserService.get_user_by_phone(local_number)
         if user is None or not user.has_role("VENDOR"):
-            cache.delete(f"email_otp_{local_number}")
             return error_response(
                 message="Vendor account not found.",
                 status=status.HTTP_404_NOT_FOUND,
@@ -889,8 +917,6 @@ class VendorForgotPasswordResetView(APIView):
 
         user.set_password(data["new_password"])
         user.save()
-        cache.delete(f"email_otp_{local_number}")
-
         # Signs them straight in after reset — no separate re-login
         # step needed. Say so if you'd rather redirect to /login
         # instead and make them sign in fresh with the new password.
@@ -985,9 +1011,11 @@ class StaffForgotPasswordSendOTPView(APIView):
         ):
             return generic_response
 
-        # otp = str(random.randint(1000, 9999))
-        otp = 1211
-        cache.set(f"staff_email_otp_{email.lower()}", otp, timeout=600)
+        otp, _ = OTPService.issue(
+            "staff_password_reset", email.lower(), _client_ip(request)
+        )
+        if otp is None:
+            return generic_response
         send_otp_email.delay(email, otp)
 
         return generic_response
@@ -1009,15 +1037,17 @@ class StaffForgotPasswordResetView(APIView):
 
         data = serializer.validated_data
         email = data["email"]
-        cache_key = f"staff_email_otp_{email.lower()}"
-
-        cached_otp = cache.get(cache_key)
-        if cached_otp is None:
+        verified, verify_error = OTPService.verify(
+            "staff_password_reset", email.lower(), data["otp"], _client_ip(request)
+        )
+        if verify_error == "missing":
             return error_response(
                 message="Code expired or not found. Please request a new one.",
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        if str(cached_otp) != str(data["otp"]):
+        if verify_error in ("locked", "rate_limited"):
+            return _otp_error(verify_error)
+        if not verified:
             return error_response(
                 message="Invalid code. Please try again.",
                 status=status.HTTP_400_BAD_REQUEST,
@@ -1027,7 +1057,6 @@ class StaffForgotPasswordResetView(APIView):
         if user is None or not (
             user.has_role("SUPPORT") or user.has_role("SUPER_ADMIN")
         ):
-            cache.delete(cache_key)
             return error_response(
                 message="Staff account not found.",
                 status=status.HTTP_404_NOT_FOUND,
@@ -1035,8 +1064,6 @@ class StaffForgotPasswordResetView(APIView):
 
         user.set_password(data["new_password"])
         user.save()
-        cache.delete(cache_key)
-
         role = "SUPER_ADMIN" if user.has_role("SUPER_ADMIN") else "SUPPORT"
 
         refresh = RefreshToken.for_user(user)

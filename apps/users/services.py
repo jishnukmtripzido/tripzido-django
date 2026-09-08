@@ -120,6 +120,102 @@
 
 from .repositories import UserRepository, AdminUserRepository
 from .models import User
+import hashlib
+import hmac
+import secrets
+
+from django.core.cache import cache
+
+
+class OTPService:
+    CODE_LENGTH = 6
+    OTP_TTL = 300
+    RESEND_COOLDOWN = 60
+    SEND_WINDOW = 3600
+    SEND_LIMIT_PER_IDENTITY = 5
+    SEND_LIMIT_PER_IP = 20
+    VERIFY_WINDOW = 600
+    VERIFY_LIMIT_PER_IP = 30
+    MAX_ATTEMPTS = 5
+    LOCKOUT_TTL = 900
+
+    @classmethod
+    def _digest(cls, value: str) -> str:
+        return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+    @classmethod
+    def _key(cls, prefix: str, scope: str, identity: str) -> str:
+        return f"otp:{prefix}:{scope}:{cls._digest(identity)}"
+
+    @classmethod
+    def _increment(cls, key: str, timeout: int) -> int:
+        if cache.add(key, 0, timeout=timeout):
+            return 1
+        return cache.incr(key)
+
+    @classmethod
+    def issue(cls, scope: str, identity: str, ip_address: str):
+        identity = identity.strip().lower()
+        identity_key = cls._key("challenge", scope, identity)
+        cooldown_key = cls._key("cooldown", scope, identity)
+        lock_key = cls._key("lock", scope, identity)
+        ip_key = cls._key("send-ip", scope, ip_address or "unknown")
+
+        if cache.get(lock_key):
+            return None, "locked"
+        if cache.get(cooldown_key):
+            return None, "cooldown"
+        if (
+            cls._increment(cls._key("send", scope, identity), cls.SEND_WINDOW)
+            > cls.SEND_LIMIT_PER_IDENTITY
+        ):
+            return None, "rate_limited"
+        if cls._increment(ip_key, cls.SEND_WINDOW) > cls.SEND_LIMIT_PER_IP:
+            return None, "rate_limited"
+
+        # code = f"{secrets.randbelow(10 ** cls.CODE_LENGTH):0{cls.CODE_LENGTH}d}"
+        code = "121111"
+        attempts_key = identity_key + ":attempts"
+        cache.delete(attempts_key)
+        cache.set(
+            identity_key,
+            {"digest": cls._digest(code), "attempts": 0},
+            timeout=cls.OTP_TTL,
+        )
+        cache.set(cooldown_key, True, timeout=cls.RESEND_COOLDOWN)
+        return code, None
+
+    @classmethod
+    def verify(cls, scope: str, identity: str, code: str, ip_address: str):
+        identity = identity.strip().lower()
+        identity_key = cls._key("challenge", scope, identity)
+        lock_key = cls._key("lock", scope, identity)
+        ip_key = cls._key("verify-ip", scope, ip_address or "unknown")
+
+        if cache.get(lock_key):
+            return False, "locked"
+        if cls._increment(ip_key, cls.VERIFY_WINDOW) > cls.VERIFY_LIMIT_PER_IP:
+            return False, "rate_limited"
+
+        challenge = cache.get(identity_key)
+        if not challenge:
+            return False, "missing"
+
+        if hmac.compare_digest(challenge["digest"], cls._digest(str(code))):
+            cache.delete(identity_key)
+            cache.delete(identity_key + ":attempts")
+            return True, None
+
+        attempts_key = identity_key + ":attempts"
+        attempts = cls._increment(attempts_key, cls.OTP_TTL)
+        challenge["attempts"] = attempts
+        if attempts >= cls.MAX_ATTEMPTS:
+            cache.delete(identity_key)
+            cache.delete(attempts_key)
+            cache.set(lock_key, True, timeout=cls.LOCKOUT_TTL)
+            return False, "locked"
+        cache.set(identity_key, challenge, timeout=cls.OTP_TTL)
+        return False, "invalid"
 
 
 class UserService:

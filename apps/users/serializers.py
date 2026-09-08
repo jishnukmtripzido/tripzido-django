@@ -144,7 +144,7 @@
 
 #     Fields:
 #         phone_number – the number that received the OTP
-#         otp          – the 4-digit code entered by the user
+#         otp          – the 6-digit code entered by the user
 #     """
 
 #     phone_number = serializers.CharField(
@@ -155,7 +155,7 @@
 #         required=True,
 #         min_length=4,
 #         max_length=4,
-#         help_text="4-digit OTP sent via SMS",
+#         help_text="6-digit OTP sent via SMS",
 #     )
 
 
@@ -302,7 +302,7 @@ class VerifyOTPSerializer(serializers.Serializer):
     phone_number = serializers.CharField(
         required=True, help_text="Phone number to verify OTP for, e.g. +919999999999"
     )
-    otp = serializers.CharField(required=True, help_text="OTP to verify")
+    otp = serializers.CharField(required=True, min_length=6, max_length=6)
 
 
 class ProfileSerializer(serializers.ModelSerializer):
@@ -388,9 +388,9 @@ class RegisterVerifyOTPSerializer(serializers.Serializer):
     )
     otp = serializers.CharField(
         required=True,
-        min_length=4,
-        max_length=4,
-        help_text="4-digit OTP sent via SMS",
+        min_length=6,
+        max_length=6,
+        help_text="6-digit OTP sent via SMS",
     )
 
 
@@ -496,7 +496,7 @@ class VendorForgotPasswordSendOTPSerializer(serializers.Serializer):
 
 class VendorForgotPasswordResetSerializer(serializers.Serializer):
     phone_number = serializers.CharField()
-    otp = serializers.CharField()
+    otp = serializers.CharField(min_length=6, max_length=6)
     new_password = serializers.CharField(
         write_only=True, trim_whitespace=False, min_length=8
     )
@@ -514,7 +514,7 @@ class StaffForgotPasswordSendOTPSerializer(serializers.Serializer):
 
 class StaffForgotPasswordResetSerializer(serializers.Serializer):
     email = serializers.EmailField()
-    otp = serializers.CharField()
+    otp = serializers.CharField(min_length=6, max_length=6)
     new_password = serializers.CharField(
         write_only=True, trim_whitespace=False, min_length=8
     )

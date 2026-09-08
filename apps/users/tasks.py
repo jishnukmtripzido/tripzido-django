@@ -38,8 +38,8 @@ def send_otp_sms(self, phone_number, otp):
         # # success ✅
         # return {"status": "sent", "phone": phone_number}
 
-        # For now just print (remove in production)
-        print(f"📱 Sending OTP {otp} to {phone_number}")
+        # Replace this with the provider call; never log the OTP value.
+        print(f"Sending OTP SMS to {phone_number}")
 
     except Exception as exc:
         # Auto retry up to 3 times if SMS fails
