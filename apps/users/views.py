@@ -46,7 +46,7 @@ def _client_ip(request):
 
 def _otp_error(reason):
     if reason == "cooldown":
-        message = "Please wait before requesting another code."
+        message = "Please wait before requesting another OTP."
     elif reason == "rate_limited":
         message = "Too many OTP requests. Please try again later."
     elif reason == "locked":
