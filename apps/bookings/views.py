@@ -130,7 +130,7 @@ class BookingPaymentStatusView(GenericAPIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, order_id: str):
-        local_status = BookingCheckoutService.get_status(order_id)
+        local_status = BookingCheckoutService.get_status(order_id, request.user)
         if local_status is None:
             return error_response(
                 message="Order not found", status=status.HTTP_404_NOT_FOUND
@@ -158,14 +158,18 @@ class BookingPaymentStatusView(GenericAPIView):
         )
         if order_status == "PAID":
             BookingCheckoutService.confirm_payment_success(
-                order_id, {"data": {"order": gateway_order}}
+                order_id,
+                {"data": {"order": gateway_order}},
+                customer=request.user,
             )
         elif order_status in ("EXPIRED", "TERMINATED"):
             BookingCheckoutService.mark_payment_failed(
-                order_id, f"Gateway reported {order_status}"
+                order_id,
+                f"Gateway reported {order_status}",
+                customer=request.user,
             )
 
-        local_status = BookingCheckoutService.get_status(order_id)
+        local_status = BookingCheckoutService.get_status(order_id, request.user)
         return success_response(
             data=local_status, message="Status retrieved", status=status.HTTP_200_OK
         )
@@ -199,14 +203,16 @@ class CashfreeWebhookView(View):
             return HttpResponse(status=400)
 
         if event_type == "PAYMENT_SUCCESS_WEBHOOK":
-            BookingCheckoutService.confirm_payment_success(order_id, payload)
+            BookingCheckoutService.confirm_payment_success(
+                order_id, payload, customer=None
+            )
         elif event_type in ("PAYMENT_FAILED_WEBHOOK", "PAYMENT_USER_DROPPED_WEBHOOK"):
             reason = (
                 payload.get("data", {})
                 .get("payment", {})
                 .get("payment_message", event_type)
             )
-            BookingCheckoutService.mark_payment_failed(order_id, reason)
+            BookingCheckoutService.mark_payment_failed(order_id, reason, customer=None)
         else:
             logger.info("Unhandled Cashfree webhook event type: %s", event_type)
 

@@ -353,12 +353,13 @@ class BookingCheckoutService:
 
     @staticmethod
     @transaction.atomic
-    def confirm_payment_success(order_id: str, gateway_payload: dict) -> bool:
-        payment = (
-            Payment.objects.select_for_update()
-            .filter(gateway_order_id=order_id)
-            .first()
+    def confirm_payment_success(order_id: str, gateway_payload: dict, customer) -> bool:
+        payment_query = Payment.objects.select_for_update().filter(
+            gateway_order_id=order_id
         )
+        if customer is not None:
+            payment_query = payment_query.filter(booking__customer=customer)
+        payment = payment_query.first()
         if payment is None:
             return False
 
@@ -368,6 +369,8 @@ class BookingCheckoutService:
         group_bookings = Booking.objects.select_for_update().filter(
             booking_group_id=payment.booking_group_id
         )
+        if customer is not None:
+            group_bookings = group_bookings.filter(customer=customer)
 
         # If the group already expired (or was cancelled) before this
         # late-arriving confirmation showed up, do NOT silently revive it —
@@ -438,12 +441,13 @@ class BookingCheckoutService:
 
     @staticmethod
     @transaction.atomic
-    def mark_payment_failed(order_id: str, reason: str) -> bool:
-        payment = (
-            Payment.objects.select_for_update()
-            .filter(gateway_order_id=order_id)
-            .first()
+    def mark_payment_failed(order_id: str, reason: str, customer) -> bool:
+        payment_query = Payment.objects.select_for_update().filter(
+            gateway_order_id=order_id
         )
+        if customer is not None:
+            payment_query = payment_query.filter(booking__customer=customer)
+        payment = payment_query.first()
         if payment is None:
             return False
         if payment.status in (Payment.Status.SUCCESS, Payment.Status.FAILED):
@@ -456,19 +460,30 @@ class BookingCheckoutService:
         payment.is_reconciled = True
         payment.save()
 
-        Booking.objects.filter(booking_group_id=payment.booking_group_id).update(
-            status=Booking.Status.PAYMENT_FAILED
+        booking_query = Booking.objects.filter(
+            booking_group_id=payment.booking_group_id
         )
+        if customer is not None:
+            booking_query = booking_query.filter(customer=customer)
+        booking_query.update(status=Booking.Status.PAYMENT_FAILED)
 
         return True
 
     @staticmethod
-    def get_status(order_id: str) -> dict | None:
-        payment = Payment.objects.filter(gateway_order_id=order_id).first()
+    def get_status(order_id: str, customer) -> dict | None:
+        payment = (
+            Payment.objects.select_related("booking")
+            .filter(
+                gateway_order_id=order_id,
+                booking__customer=customer,
+            )
+            .first()
+        )
         if payment is None:
             return None
         bookings = Booking.objects.filter(
-            booking_group_id=payment.booking.booking_group_id
+            booking_group_id=payment.booking_group_id,
+            customer=customer,
         )
         return {
             "status": payment.status,
