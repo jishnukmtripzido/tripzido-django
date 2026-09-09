@@ -758,6 +758,33 @@ class VendorFleetRepository:
 
         return listing, None
 
+    @staticmethod
+    def listing_exists_for_vendor(
+        vendor_id: int,
+        vehicle_type_id: int,
+        pickup_location_id: int,
+        exclude_listing_id: int | None = None,
+    ) -> bool:
+        """
+        True if this vendor already has a listing for this vehicle type
+        at this pickup location — mirrors VehicleListing's
+        unique_together = ("vendor", "vehicle_type", "pickup_location")
+        exactly, but callable ahead of submission so the wizard can flag
+        the conflict as soon as both fields are picked, instead of
+        waiting for the IntegrityError at create time.
+
+        exclude_listing_id lets an edit flow check without matching
+        against the listing being edited itself.
+        """
+        qs = VehicleListing.objects.filter(
+            vendor_id=vendor_id,
+            vehicle_type_id=vehicle_type_id,
+            pickup_location_id=pickup_location_id,
+        )
+        if exclude_listing_id is not None:
+            qs = qs.exclude(id=exclude_listing_id)
+        return qs.exists()
+
 
 class VehicleTypeRepository:
 

@@ -26,6 +26,7 @@ from apps.vehicles.views import (
     VehicleTypeOptionsView,
     VendorFleetListView,
     VendorListingDetailView,
+    VendorListingDuplicateCheckView,
     VendorListingImageDetailView,
     VendorListingImagesView,
     VendorPickupPointDetailView,
@@ -184,5 +185,10 @@ urlpatterns = [
         "admin/reviews/<int:review_id>/restore/",
         AdminReviewRestoreView.as_view(),
         name="admin-review-restore",
+    ),
+    path(
+        "vendor/fleet/check-duplicate/",
+        VendorListingDuplicateCheckView.as_view(),
+        name="vendor-listing-duplicate-check",
     ),
 ]

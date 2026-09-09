@@ -25,6 +25,8 @@ from apps.vehicles.serializers import (
     VehicleTypeOptionSerializer,
     PackageTypeOptionSerializer,
     ScheduleTemplateSerializer,
+    VendorListingDuplicateCheckQuerySerializer,
+    VendorListingDuplicateCheckSerializer,
     VendorListingImageDetailSerializer,
     VendorBlockedPeriodListSerializer,
     VendorBlockedPeriodCreateSerializer,
@@ -1848,5 +1850,53 @@ class AdminReviewStatusUpdateView(GenericAPIView):
         return success_response(
             data=output.data,
             message="Review status updated successfully",
+            status=status.HTTP_200_OK,
+        )
+
+
+class VendorListingDuplicateCheckView(GenericAPIView):
+    """
+    GET /api/vehicles/vendor/fleet/check-duplicate/
+        ?vehicle_type_id=&pickup_location_id=&exclude_listing_id=
+
+    Lets the "Add a bike" wizard flag a vendor+vehicle_type+pickup_location
+    conflict as soon as both fields are selected, instead of only
+    surfacing it as a 409 at final submission. Mirrors the
+    unique_together constraint on VehicleListing exactly — see
+    VendorFleetRepository.listing_exists_for_vendor.
+    """
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = VendorListingDuplicateCheckSerializer
+
+    def get(self, request):
+        vendor = request.user.get_vendor_profile()
+        if vendor is None:
+            return error_response(
+                message="This account has no vendor profile.",
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        query_serializer = VendorListingDuplicateCheckQuerySerializer(
+            data=request.query_params
+        )
+        if not query_serializer.is_valid():
+            return error_response(
+                message="Invalid parameters",
+                errors=query_serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        exists = VendorFleetService.check_duplicate_listing(
+            vendor.id,
+            query_serializer.validated_data["vehicle_type_id"],
+            query_serializer.validated_data["pickup_location_id"],
+            query_serializer.validated_data.get("exclude_listing_id"),
+        )
+
+        serializer = self.get_serializer({"exists": exists})
+        return success_response(
+            data=serializer.data,
+            message="Duplicate check completed",
             status=status.HTTP_200_OK,
         )

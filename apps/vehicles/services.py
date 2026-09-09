@@ -1032,6 +1032,17 @@ class VendorFleetService:
     def toggle_active_status(listing_id: int, vendor_id: int):
         return VendorFleetRepository.toggle_active_status(listing_id, vendor_id)
 
+    @staticmethod
+    def check_duplicate_listing(
+        vendor_id: int,
+        vehicle_type_id: int,
+        pickup_location_id: int,
+        exclude_listing_id: int | None = None,
+    ) -> bool:
+        return VendorFleetRepository.listing_exists_for_vendor(
+            vendor_id, vehicle_type_id, pickup_location_id, exclude_listing_id
+        )
+
 
 class VendorListingDetailService:
 

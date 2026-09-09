@@ -1114,3 +1114,13 @@ class AdminReviewStatusUpdateSerializer(serializers.Serializer):
     moderation_note = serializers.CharField(
         required=False, allow_blank=True, default=""
     )
+
+
+class VendorListingDuplicateCheckQuerySerializer(serializers.Serializer):
+    vehicle_type_id = serializers.IntegerField(min_value=1)
+    pickup_location_id = serializers.IntegerField(min_value=1)
+    exclude_listing_id = serializers.IntegerField(min_value=1, required=False)
+
+
+class VendorListingDuplicateCheckSerializer(serializers.Serializer):
+    exists = serializers.BooleanField()
