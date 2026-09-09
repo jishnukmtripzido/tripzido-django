@@ -210,31 +210,102 @@ class AdminVendorRepository:
     def get_by_id(vendor_id: int):
         return Vendor.objects.filter(id=vendor_id).select_related("user").first()
 
+    @staticmethod
+    def update_details(vendor, data: dict):
+        for field in ("business_name", "owner_name", "email", "address", "gst_number"):
+            if field in data:
+                setattr(vendor, field, data[field])
+        vendor.save()
+        return vendor
+
 
 class AdminVendorDocumentRepository:
 
     @staticmethod
     def get_for_vendor(vendor_id: int):
-        return VendorDocument.objects.filter(vendor_id=vendor_id).order_by(
+        # all_objects, not objects — deactivated documents stay visible
+        # with is_active=False (matching VendorTeamMember/VehicleReview
+        # pattern) rather than disappearing entirely, so they can be
+        # restored later.
+        return VendorDocument.all_objects.filter(vendor_id=vendor_id).order_by(
             "-created_at"
         )
 
     @staticmethod
     def get_by_id(doc_id: int):
-        return VendorDocument.objects.filter(id=doc_id).select_related("vendor").first()
+        return (
+            VendorDocument.all_objects.filter(id=doc_id)
+            .select_related("vendor")
+            .first()
+        )
+
+    @staticmethod
+    def create(vendor_id: int, doc_type: str, file, admin_user):
+        return VendorDocument.objects.create(
+            vendor_id=vendor_id,
+            doc_type=doc_type,
+            file=file,
+            original_filename=file.name,
+            status=VendorDocument.Status.VERIFIED,
+            reviewed_by=admin_user,
+            reviewed_at=timezone.now(),
+        )
+
+    @staticmethod
+    def update(doc, data: dict):
+        if "doc_type" in data:
+            doc.doc_type = data["doc_type"]
+        if "file" in data:
+            doc.file = data["file"]
+            doc.original_filename = data["file"].name
+        doc.save()
+        return doc
 
 
 class AdminBankAccountRepository:
 
     @staticmethod
     def get_for_vendor(vendor_id: int):
-        return BankAccount.objects.filter(vendor_id=vendor_id).order_by("-created_at")
+        return BankAccount.all_objects.filter(vendor_id=vendor_id).order_by(
+            "-created_at"
+        )
 
     @staticmethod
     def get_by_id(account_id: int):
         return (
-            BankAccount.objects.filter(id=account_id).select_related("vendor").first()
+            BankAccount.all_objects.filter(id=account_id)
+            .select_related("vendor")
+            .first()
         )
+
+    @staticmethod
+    def create(vendor_id: int, data: dict, admin_user):
+        return BankAccount.objects.create(
+            vendor_id=vendor_id,
+            account_holder_name=data["account_holder_name"],
+            account_number=data["account_number"],
+            ifsc_code=data["ifsc_code"],
+            bank_name=data.get("bank_name", ""),
+            branch_name=data.get("branch_name", ""),
+            status=BankAccount.Status.VERIFIED,
+            is_active_acc=True,
+            verified_by=admin_user,
+            verified_at=timezone.now(),
+        )
+
+    @staticmethod
+    def update(account, data: dict):
+        for field in (
+            "account_holder_name",
+            "account_number",
+            "ifsc_code",
+            "bank_name",
+            "branch_name",
+        ):
+            if field in data:
+                setattr(account, field, data[field])
+        account.save()
+        return account
 
 
 class AdminVendorCommissionRepository:
@@ -315,4 +386,64 @@ class AdminVendorSubscriptionRepository:
             is_current=True,
             is_manually_assigned=True,
             assigned_by=assigned_by,
+        )
+
+
+class VendorSelfDocumentRepository:
+    """
+    Self-service (vendor-facing, /me/documents/) document queries —
+    always scoped to the calling vendor's own id, which the view
+    resolves via request.user.get_vendor_profile(). Deliberately uses
+    the default `objects` manager (soft-delete aware) rather than
+    `all_objects`: a vendor never needs to see a document an admin has
+    deactivated on their behalf.
+    """
+
+    @staticmethod
+    def get_for_vendor(vendor_id: int):
+        return VendorDocument.objects.filter(vendor_id=vendor_id).order_by(
+            "-created_at"
+        )
+
+    @staticmethod
+    def create(vendor_id: int, doc_type: str, file):
+        # Always PENDING — a vendor-submitted document still needs
+        # admin review, same queue AdminDocumentReviewView already
+        # serves for admin-side uploads.
+        return VendorDocument.objects.create(
+            vendor_id=vendor_id,
+            doc_type=doc_type,
+            file=file,
+            original_filename=file.name,
+            status=VendorDocument.Status.PENDING,
+        )
+
+
+class VendorSelfBankAccountRepository:
+    """
+    Self-service (vendor-facing, /me/bank-accounts/) bank account
+    queries, same scoping rules as VendorSelfDocumentRepository above.
+    """
+
+    @staticmethod
+    def get_for_vendor(vendor_id: int):
+        return BankAccount.objects.filter(vendor_id=vendor_id).order_by("-created_at")
+
+    @staticmethod
+    def create(vendor_id: int, data: dict):
+        # Always PENDING and never the active payout account yet — it
+        # only becomes active once an admin verifies it via
+        # AdminBankAccountService.review, which is what actually
+        # deactivates whatever account was active before (that
+        # cascade already lives on BankAccount.save()). A vendor
+        # can't skip that review just by submitting a new account.
+        return BankAccount.objects.create(
+            vendor_id=vendor_id,
+            account_holder_name=data["account_holder_name"],
+            account_number=data["account_number"],
+            ifsc_code=data["ifsc_code"],
+            bank_name=data.get("bank_name", ""),
+            branch_name=data.get("branch_name", ""),
+            status=BankAccount.Status.PENDING_VERIFICATION,
+            is_active_acc=False,
         )

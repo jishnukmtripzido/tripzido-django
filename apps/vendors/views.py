@@ -3,15 +3,19 @@ from rest_framework.generics import GenericAPIView
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from drf_spectacular.utils import extend_schema
-
+from rest_framework.parsers import MultiPartParser, FormParser
 from apps.vendors.serializers import (
+    AdminBankAccountCreateSerializer,
     AdminBankAccountReviewSerializer,
     AdminBankAccountSerializer,
+    AdminBankAccountUpdateSerializer,
     AdminDocumentReviewSerializer,
     AdminSubscriptionPlanSerializer,
     AdminVendorCommissionSerializer,
     AdminVendorDetailSerializer,
     AdminVendorDocumentSerializer,
+    AdminVendorDocumentUpdateSerializer,
+    AdminVendorDocumentUploadSerializer,
     AdminVendorListSerializer,
     AdminVendorRegistrationSerializer,
     AdminVendorStatusUpdateSerializer,
@@ -19,11 +23,15 @@ from apps.vendors.serializers import (
     AdminVendorSubscriptionSerializer,
     AdminVendorTeamMemberCreateSerializer,
     AdminVendorTeamMemberSerializer,
+    AdminVendorUpdateSerializer,
+    VendorBankAccountSerializer,
     VendorDashboardAttentionSerializer,
     VendorDashboardFleetSerializer,
     VendorDashboardRecentBookingsSerializer,
     VendorDashboardStatsSerializer,
     VendorDashboardStatusSerializer,
+    VendorDocumentSerializer,
+    VendorProfileSerializer,
     VendorTermsSerializer,
     VendorTermsUpdateSerializer,
     VendorDashboardSerializer,
@@ -37,6 +45,9 @@ from apps.vendors.services import (
     AdminVendorService,
     AdminVendorSubscriptionService,
     AdminVendorTeamService,
+    VendorProfileService,
+    VendorSelfBankAccountService,
+    VendorSelfDocumentService,
     VendorTermsService,
     VendorDashboardService,
 )
@@ -132,6 +143,146 @@ class VendorTermsManageView(GenericAPIView):
         )
 
 
+class VendorProfileView(GenericAPIView):
+    """
+    GET /api/vendors/me/ — the authenticated vendor's own business
+    profile (business name, owner, address, GST, status, current
+    subscription). Read-only; editing your own profile isn't exposed
+    here — only admins can change these fields, same as before.
+    """
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = VendorProfileSerializer
+
+    def get(self, request):
+        vendor = request.user.get_vendor_profile()
+        if vendor is None:
+            return error_response(
+                message="This account has no vendor profile.",
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        serializer = self.get_serializer(vendor)
+        return success_response(
+            data=serializer.data,
+            message="Vendor profile retrieved successfully",
+            status=status.HTTP_200_OK,
+        )
+
+
+class VendorDocumentsSelfView(GenericAPIView):
+    """
+    GET  /api/vendors/me/documents/  — the vendor's own KYC documents
+    POST /api/vendors/me/documents/  — submit a new one
+
+    A vendor-submitted document always lands as PENDING and joins the
+    same review queue AdminDocumentReviewView already serves for
+    admin-side uploads — there's no separate "self-verified" path.
+    View-and-add only: no edit or delete is exposed here, matching
+    what was asked for on the settings page.
+    """
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = VendorDocumentSerializer
+    parser_classes = [MultiPartParser, FormParser]
+
+    def get(self, request):
+        vendor = request.user.get_vendor_profile()
+        if vendor is None:
+            return error_response(
+                message="This account has no vendor profile.",
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        docs = VendorSelfDocumentService.get_for_vendor(vendor.id)
+        serializer = self.get_serializer(docs, many=True)
+        return success_response(
+            data=serializer.data,
+            message="Documents retrieved successfully",
+            status=status.HTTP_200_OK,
+        )
+
+    def post(self, request):
+        vendor = request.user.get_vendor_profile()
+        if vendor is None:
+            return error_response(
+                message="This account has no vendor profile.",
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        input_serializer = AdminVendorDocumentUploadSerializer(data=request.data)
+        if not input_serializer.is_valid():
+            return error_response(
+                message="Invalid data",
+                errors=input_serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        doc = VendorSelfDocumentService.create(
+            vendor.id,
+            input_serializer.validated_data["doc_type"],
+            input_serializer.validated_data["file"],
+        )
+        output_serializer = VendorDocumentSerializer(doc)
+        return success_response(
+            data=output_serializer.data,
+            message="Document submitted for review",
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class VendorBankAccountsSelfView(GenericAPIView):
+    """
+    GET  /api/vendors/me/bank-accounts/  — the vendor's own bank accounts
+    POST /api/vendors/me/bank-accounts/  — submit a new one
+
+    Same PENDING-review pattern as documents above: a vendor-submitted
+    account never becomes the active payout account by itself — an
+    admin has to verify it first (AdminBankAccountReviewView), which is
+    what actually flips is_active_acc and deactivates whatever was
+    active before. The frontend's "make this active" confirmation is
+    about intent going into review, not an immediate switch.
+    """
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = VendorBankAccountSerializer
+
+    def get(self, request):
+        vendor = request.user.get_vendor_profile()
+        if vendor is None:
+            return error_response(
+                message="This account has no vendor profile.",
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        accounts = VendorSelfBankAccountService.get_for_vendor(vendor.id)
+        serializer = self.get_serializer(accounts, many=True)
+        return success_response(
+            data=serializer.data,
+            message="Bank accounts retrieved successfully",
+            status=status.HTTP_200_OK,
+        )
+
+    def post(self, request):
+        vendor = request.user.get_vendor_profile()
+        if vendor is None:
+            return error_response(
+                message="This account has no vendor profile.",
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        input_serializer = AdminBankAccountCreateSerializer(data=request.data)
+        if not input_serializer.is_valid():
+            return error_response(
+                message="Invalid data",
+                errors=input_serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        account = VendorSelfBankAccountService.create(
+            vendor.id, input_serializer.validated_data
+        )
+        output_serializer = VendorBankAccountSerializer(account)
+        return success_response(
+            data=output_serializer.data,
+            message="Bank account submitted for review",
+            status=status.HTTP_201_CREATED,
+        )
+
+
 class VendorDashboardView(GenericAPIView):
     """GET /api/vendors/me/dashboard/"""
 
@@ -194,6 +345,26 @@ class AdminVendorDetailView(GenericAPIView):
             status=status.HTTP_200_OK,
         )
 
+    def patch(self, request, vendor_id: int):
+        serializer = AdminVendorUpdateSerializer(data=request.data, partial=True)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid data",
+                errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        vendor, error = AdminVendorService.update_details(
+            vendor_id, serializer.validated_data, request.user
+        )
+        if vendor is None:
+            return error_response(message=error, status=status.HTTP_404_NOT_FOUND)
+        output = AdminVendorDetailSerializer(vendor)
+        return success_response(
+            data=output.data,
+            message="Vendor updated successfully",
+            status=status.HTTP_200_OK,
+        )
+
 
 class AdminVendorStatusUpdateView(GenericAPIView):
     """PATCH /api/vendors/admin/vendors/<int:vendor_id>/status/"""
@@ -231,10 +402,14 @@ class AdminVendorStatusUpdateView(GenericAPIView):
 
 
 class AdminVendorDocumentsView(GenericAPIView):
-    """GET /api/vendors/admin/vendors/<int:vendor_id>/documents/"""
+    """
+    GET  /api/vendors/admin/vendors/<int:vendor_id>/documents/
+    POST /api/vendors/admin/vendors/<int:vendor_id>/documents/ — admin-uploaded, auto-verified
+    """
 
     permission_classes = [IsAuthenticated, IsStaffRole]
     serializer_class = AdminVendorDocumentSerializer
+    parser_classes = [MultiPartParser, FormParser]
 
     def get(self, request, vendor_id: int):
         docs = AdminVendorDocumentService.get_for_vendor(vendor_id)
@@ -243,6 +418,29 @@ class AdminVendorDocumentsView(GenericAPIView):
             data=serializer.data,
             message="Documents retrieved successfully",
             status=status.HTTP_200_OK,
+        )
+
+    def post(self, request, vendor_id: int):
+        serializer = AdminVendorDocumentUploadSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid data",
+                errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        doc, error = AdminVendorDocumentService.create(
+            vendor_id,
+            serializer.validated_data["doc_type"],
+            serializer.validated_data["file"],
+            request.user,
+        )
+        if doc is None:
+            return error_response(message=error, status=status.HTTP_400_BAD_REQUEST)
+        output = AdminVendorDocumentSerializer(doc)
+        return success_response(
+            data=output.data,
+            message="Document uploaded successfully",
+            status=status.HTTP_201_CREATED,
         )
 
 
@@ -277,7 +475,10 @@ class AdminDocumentReviewView(GenericAPIView):
 
 
 class AdminVendorBankAccountsView(GenericAPIView):
-    """GET /api/vendors/admin/vendors/<int:vendor_id>/bank-accounts/"""
+    """
+    GET  /api/vendors/admin/vendors/<int:vendor_id>/bank-accounts/
+    POST /api/vendors/admin/vendors/<int:vendor_id>/bank-accounts/ — admin-entered, auto-verified
+    """
 
     permission_classes = [IsAuthenticated, IsStaffRole]
     serializer_class = AdminBankAccountSerializer
@@ -289,6 +490,26 @@ class AdminVendorBankAccountsView(GenericAPIView):
             data=serializer.data,
             message="Bank accounts retrieved successfully",
             status=status.HTTP_200_OK,
+        )
+
+    def post(self, request, vendor_id: int):
+        serializer = AdminBankAccountCreateSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid data",
+                errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        account, error = AdminBankAccountService.create(
+            vendor_id, serializer.validated_data, request.user
+        )
+        if account is None:
+            return error_response(message=error, status=status.HTTP_400_BAD_REQUEST)
+        output = AdminBankAccountSerializer(account)
+        return success_response(
+            data=output.data,
+            message="Bank account added successfully",
+            status=status.HTTP_201_CREATED,
         )
 
 
@@ -785,4 +1006,167 @@ class VendorDashboardRecentBookingsView(GenericAPIView):
             data=serializer.data,
             message="Recent bookings retrieved successfully",
             status=status.HTTP_200_OK,
+        )
+
+
+class AdminDocumentDetailView(GenericAPIView):
+    """
+    PATCH  /api/vendors/admin/documents/<int:doc_id>/ — edit doc_type/file
+    DELETE /api/vendors/admin/documents/<int:doc_id>/ — permanent, irreversible
+    """
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+    serializer_class = AdminVendorDocumentUpdateSerializer
+    parser_classes = [MultiPartParser, FormParser]
+
+    def patch(self, request, doc_id: int):
+        serializer = AdminVendorDocumentUpdateSerializer(
+            data=request.data, partial=True
+        )
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid data",
+                errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        doc, error = AdminVendorDocumentService.update(
+            doc_id, serializer.validated_data, request.user
+        )
+        if doc is None:
+            return error_response(message=error, status=status.HTTP_404_NOT_FOUND)
+        output = AdminVendorDocumentSerializer(doc)
+        return success_response(
+            data=output.data,
+            message="Document updated successfully",
+            status=status.HTTP_200_OK,
+        )
+
+    def delete(self, request, doc_id: int):
+        deleted = AdminVendorDocumentService.hard_delete(doc_id)
+        if not deleted:
+            return error_response(
+                message="Document not found", status=status.HTTP_404_NOT_FOUND
+            )
+        return success_response(
+            data=None,
+            message="Document permanently deleted",
+            status=status.HTTP_204_NO_CONTENT,
+        )
+
+
+class AdminDocumentDeactivateView(GenericAPIView):
+    """PATCH /api/vendors/admin/documents/<int:doc_id>/deactivate/"""
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+
+    def patch(self, request, doc_id: int):
+        ok = AdminVendorDocumentService.deactivate(doc_id, request.user)
+        if not ok:
+            return error_response(
+                message="Document not found", status=status.HTTP_404_NOT_FOUND
+            )
+        return success_response(
+            data=None, message="Document deactivated", status=status.HTTP_200_OK
+        )
+
+
+class AdminDocumentRestoreView(GenericAPIView):
+    """PATCH /api/vendors/admin/documents/<int:doc_id>/restore/"""
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+
+    def patch(self, request, doc_id: int):
+        ok = AdminVendorDocumentService.restore(doc_id)
+        if not ok:
+            return error_response(
+                message="Document not found", status=status.HTTP_404_NOT_FOUND
+            )
+        return success_response(
+            data=None, message="Document reactivated", status=status.HTTP_200_OK
+        )
+
+
+class AdminBankAccountDetailView(GenericAPIView):
+    """
+    PATCH  /api/vendors/admin/bank-accounts/<int:account_id>/
+    DELETE /api/vendors/admin/bank-accounts/<int:account_id>/ — permanent
+    """
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+    serializer_class = AdminBankAccountUpdateSerializer
+
+    def patch(self, request, account_id: int):
+        serializer = AdminBankAccountUpdateSerializer(data=request.data, partial=True)
+        if not serializer.is_valid():
+            return error_response(
+                message="Invalid data",
+                errors=serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        account, error = AdminBankAccountService.update(
+            account_id, serializer.validated_data, request.user
+        )
+        if account is None:
+            return error_response(message=error, status=status.HTTP_404_NOT_FOUND)
+        output = AdminBankAccountSerializer(account)
+        return success_response(
+            data=output.data,
+            message="Bank account updated successfully",
+            status=status.HTTP_200_OK,
+        )
+
+    def delete(self, request, account_id: int):
+        deleted, error = AdminBankAccountService.hard_delete(account_id)
+        if not deleted:
+            if error == "not_found":
+                return error_response(
+                    message="Bank account not found",
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            return error_response(
+                message="This is the active payout account and can't be deleted. Add a new bank account to replace it — once it's verified, this one can be deleted.",
+                status=status.HTTP_409_CONFLICT,
+            )
+        return success_response(
+            data=None,
+            message="Bank account permanently deleted",
+            status=status.HTTP_204_NO_CONTENT,
+        )
+
+
+class AdminBankAccountDeactivateView(GenericAPIView):
+    """PATCH /api/vendors/admin/bank-accounts/<int:account_id>/deactivate/"""
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+
+    def patch(self, request, account_id: int):
+        ok, error = AdminBankAccountService.deactivate(account_id, request.user)
+        if not ok:
+            if error == "not_found":
+                return error_response(
+                    message="Bank account not found",
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            return error_response(
+                message="This is the active payout account and can't be deactivated. Add a new bank account to replace it first.",
+                status=status.HTTP_409_CONFLICT,
+            )
+        return success_response(
+            data=None, message="Bank account deactivated", status=status.HTTP_200_OK
+        )
+
+
+class AdminBankAccountRestoreView(GenericAPIView):
+    """PATCH /api/vendors/admin/bank-accounts/<int:account_id>/restore/"""
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+
+    def patch(self, request, account_id: int):
+        ok = AdminBankAccountService.restore(account_id)
+        if not ok:
+            return error_response(
+                message="Bank account not found", status=status.HTTP_404_NOT_FOUND
+            )
+        return success_response(
+            data=None, message="Bank account reactivated", status=status.HTTP_200_OK
         )

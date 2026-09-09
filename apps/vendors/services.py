@@ -8,6 +8,8 @@ from apps.vendors.repositories import (
     AdminVendorSubscriptionRepository,
     VendorTermsRepository,
     VendorDashboardRepository,
+    VendorSelfDocumentRepository,
+    VendorSelfBankAccountRepository,
 )
 from django.utils import timezone
 from django.db import transaction
@@ -20,6 +22,7 @@ from apps.vendors.models import (
     VendorDocument,
     VendorTeamMember,
 )
+from apps.logs.services import ActivityLogService
 
 
 class VendorTermsService:
@@ -31,6 +34,41 @@ class VendorTermsService:
     @staticmethod
     def save_new_version(vendor_id: int, data: dict):
         return VendorTermsRepository.save_new_version(vendor_id, data)
+
+
+class VendorProfileService:
+    """
+    Vendor-facing read of their own profile. Reuses
+    AdminVendorRepository.get_by_id — the query itself doesn't need to
+    be duplicated, only the serializer differs (VendorProfileSerializer
+    drops the admin-only audit-trail fields).
+    """
+
+    @staticmethod
+    def get_profile(vendor_id: int):
+        return AdminVendorRepository.get_by_id(vendor_id)
+
+
+class VendorSelfDocumentService:
+
+    @staticmethod
+    def get_for_vendor(vendor_id: int):
+        return VendorSelfDocumentRepository.get_for_vendor(vendor_id)
+
+    @staticmethod
+    def create(vendor_id: int, doc_type: str, file):
+        return VendorSelfDocumentRepository.create(vendor_id, doc_type, file)
+
+
+class VendorSelfBankAccountService:
+
+    @staticmethod
+    def get_for_vendor(vendor_id: int):
+        return VendorSelfBankAccountRepository.get_for_vendor(vendor_id)
+
+    @staticmethod
+    def create(vendor_id: int, data: dict):
+        return VendorSelfBankAccountRepository.create(vendor_id, data)
 
 
 def _trend_pct(current, previous) -> float:
@@ -235,6 +273,82 @@ class AdminVendorService:
         vendor.save()
         return vendor, None
 
+    @staticmethod
+    def update_details(vendor_id: int, data: dict, admin_user):
+        vendor = Vendor.objects.filter(id=vendor_id).first()
+        if vendor is None:
+            return None, "Vendor not found"
+
+        vendor = AdminVendorRepository.update_details(vendor, data)
+
+        ActivityLogService.log(
+            actor=admin_user,
+            actor_role=(
+                "SUPER_ADMIN" if admin_user.has_role("SUPER_ADMIN") else "SUPPORT"
+            ),
+            action="VENDOR_DETAILS_UPDATED",
+            target_model="Vendor",
+            target_id=vendor.id,
+            target_label=vendor.business_name,
+            description=f"Updated fields: {', '.join(data.keys())}",
+        )
+        return vendor, None
+
+    @staticmethod
+    @transaction.atomic
+    def update_status(vendor_id: int, target_status: str, admin_user, reason: str = ""):
+        vendor = Vendor.objects.select_for_update().filter(id=vendor_id).first()
+        if vendor is None:
+            return None, "Vendor not found"
+
+        allowed = AdminVendorService.ALLOWED_TRANSITIONS.get(vendor.status, [])
+        if target_status not in allowed:
+            return None, (
+                f"Cannot change status from '{vendor.get_status_display()}' to '{target_status}'."
+            )
+        if (
+            target_status in AdminVendorService.REASON_REQUIRED_FOR
+            and not reason.strip()
+        ):
+            return None, "A reason is required for this action."
+
+        now = timezone.now()
+        was_suspended = vendor.status == Vendor.Status.SUSPENDED
+
+        if target_status == Vendor.Status.APPROVED and not was_suspended:
+            vendor.reviewed_by = admin_user
+            vendor.reviewed_at = now
+        elif target_status == Vendor.Status.APPROVED and was_suspended:
+            pass
+        elif target_status == Vendor.Status.REJECTED:
+            vendor.reviewed_by = admin_user
+            vendor.reviewed_at = now
+            vendor.rejection_reason = reason
+        elif target_status == Vendor.Status.SUSPENDED:
+            vendor.suspended_by = admin_user
+            vendor.suspended_at = now
+            vendor.suspension_reason = reason
+        elif target_status == Vendor.Status.BANNED:
+            vendor.banned_by = admin_user
+            vendor.banned_at = now
+            vendor.ban_reason = reason
+
+        vendor.status = target_status
+        vendor.save()
+
+        ActivityLogService.log(
+            actor=admin_user,
+            actor_role=(
+                "SUPER_ADMIN" if admin_user.has_role("SUPER_ADMIN") else "SUPPORT"
+            ),
+            action=f"VENDOR_{target_status}",
+            target_model="Vendor",
+            target_id=vendor.id,
+            target_label=vendor.business_name,
+            description=reason,
+        )
+        return vendor, None
+
 
 class AdminVendorDocumentService:
 
@@ -268,6 +382,67 @@ class AdminVendorDocumentService:
         doc.save()
         return doc, None
 
+    @staticmethod
+    def create(vendor_id: int, doc_type: str, file, admin_user):
+        if not Vendor.objects.filter(id=vendor_id).exists():
+            return None, "Vendor not found"
+        doc = AdminVendorDocumentRepository.create(
+            vendor_id, doc_type, file, admin_user
+        )
+        return doc, None
+
+    @staticmethod
+    def update(doc_id: int, data: dict, admin_user):
+        doc = AdminVendorDocumentRepository.get_by_id(doc_id)
+        if doc is None:
+            return None, "Document not found"
+        doc = AdminVendorDocumentRepository.update(doc, data)
+        ActivityLogService.log(
+            actor=admin_user,
+            actor_role=(
+                "SUPER_ADMIN" if admin_user.has_role("SUPER_ADMIN") else "SUPPORT"
+            ),
+            action="VENDOR_DOCUMENT_UPDATED",
+            target_model="VendorDocument",
+            target_id=doc.id,
+            target_label=f"{doc.vendor.business_name} — {doc.get_doc_type_display()}",
+        )
+        return doc, None
+
+    @staticmethod
+    def deactivate(doc_id: int, admin_user):
+        doc = AdminVendorDocumentRepository.get_by_id(doc_id)
+        if doc is None:
+            return False
+        doc.delete(deleted_by=admin_user)  # BaseModel's soft-delete override
+        ActivityLogService.log(
+            actor=admin_user,
+            actor_role=(
+                "SUPER_ADMIN" if admin_user.has_role("SUPER_ADMIN") else "SUPPORT"
+            ),
+            action="VENDOR_DOCUMENT_DEACTIVATED",
+            target_model="VendorDocument",
+            target_id=doc.id,
+            target_label=f"{doc.vendor.business_name} — {doc.get_doc_type_display()}",
+        )
+        return True
+
+    @staticmethod
+    def restore(doc_id: int):
+        doc = AdminVendorDocumentRepository.get_by_id(doc_id)
+        if doc is None:
+            return False
+        doc.restore()
+        return True
+
+    @staticmethod
+    def hard_delete(doc_id: int):
+        doc = AdminVendorDocumentRepository.get_by_id(doc_id)
+        if doc is None:
+            return False
+        doc.hard_delete()
+        return True
+
 
 class AdminBankAccountService:
 
@@ -293,15 +468,80 @@ class AdminBankAccountService:
         account.verified_by = admin_user
         account.verified_at = timezone.now()
         if new_status == BankAccount.Status.VERIFIED:
-            # A verified account becomes the vendor's active payout
-            # account — the model's own save() already auto-deactivates
-            # any other account for this vendor when is_active_acc=True
-            # is set, so this is the only line needed to make the switch.
             account.is_active_acc = True
         else:
             account.rejection_reason = rejection_reason
         account.save()
         return account, None
+
+    @staticmethod
+    def create(vendor_id: int, data: dict, admin_user):
+        if not Vendor.objects.filter(id=vendor_id).exists():
+            return None, "Vendor not found"
+        account = AdminBankAccountRepository.create(vendor_id, data, admin_user)
+        return account, None
+
+    @staticmethod
+    def update(account_id: int, data: dict, admin_user):
+        account = AdminBankAccountRepository.get_by_id(account_id)
+        if account is None:
+            return None, "Bank account not found"
+        account = AdminBankAccountRepository.update(account, data)
+        ActivityLogService.log(
+            actor=admin_user,
+            actor_role=(
+                "SUPER_ADMIN" if admin_user.has_role("SUPER_ADMIN") else "SUPPORT"
+            ),
+            action="VENDOR_BANK_ACCOUNT_UPDATED",
+            target_model="BankAccount",
+            target_id=account.id,
+            target_label=f"{account.vendor.business_name} — {account.account_holder_name}",
+        )
+        return account, None
+
+    @staticmethod
+    def deactivate(account_id: int, admin_user):
+        account = AdminBankAccountRepository.get_by_id(account_id)
+        if account is None:
+            return False, "not_found"
+        if account.is_active_acc:
+            return False, "active"
+        account.delete(deleted_by=admin_user)
+        ActivityLogService.log(
+            actor=admin_user,
+            actor_role=(
+                "SUPER_ADMIN" if admin_user.has_role("SUPER_ADMIN") else "SUPPORT"
+            ),
+            action="VENDOR_BANK_ACCOUNT_DEACTIVATED",
+            target_model="BankAccount",
+            target_id=account.id,
+            target_label=f"{account.vendor.business_name} — {account.account_holder_name}",
+        )
+        return True, None
+
+    @staticmethod
+    def restore(account_id: int):
+        account = AdminBankAccountRepository.get_by_id(account_id)
+        if account is None:
+            return False
+        account.restore()
+        return True
+
+    @staticmethod
+    def hard_delete(account_id: int):
+        # The active payout account can't be deleted outright — doing
+        # so would leave the vendor with no usable payout account and
+        # no record of what used to be paid where. An admin has to add
+        # (and get verified) a replacement first; verifying a new one
+        # already flips this one's is_active_acc off via the model's
+        # own save() cascade, at which point it becomes deletable.
+        account = AdminBankAccountRepository.get_by_id(account_id)
+        if account is None:
+            return False, "not_found"
+        if account.is_active_acc:
+            return False, "active"
+        account.hard_delete()
+        return True, None
 
 
 class AdminVendorCommissionService:
@@ -456,6 +696,16 @@ class AdminVendorRegistrationService:
             status=Vendor.Status.APPROVED,
             reviewed_by=admin_user,
             reviewed_at=timezone.now(),
+        )
+        ActivityLogService.log(
+            actor=admin_user,
+            actor_role=(
+                "SUPER_ADMIN" if admin_user.has_role("SUPER_ADMIN") else "SUPPORT"
+            ),
+            action="VENDOR_REGISTERED",
+            target_model="Vendor",
+            target_id=vendor.id,
+            target_label=vendor.business_name,
         )
         return vendor, None
 

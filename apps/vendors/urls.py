@@ -1,6 +1,12 @@
 from django.urls import path
 from apps.vendors.views import (
+    AdminBankAccountDeactivateView,
+    AdminBankAccountDetailView,
     AdminBankAccountReviewView,
+    AdminBankAccountRestoreView,
+    AdminDocumentDeactivateView,
+    AdminDocumentDetailView,
+    AdminDocumentRestoreView,
     AdminDocumentReviewView,
     AdminSubscriptionPlanDetailView,
     AdminSubscriptionPlanListCreateView,
@@ -18,17 +24,37 @@ from apps.vendors.views import (
     AdminVendorTeamMemberDetailView,
     AdminVendorTeamMemberRestoreView,
     AdminVendorTeamView,
+    VendorBankAccountsSelfView,
     VendorDashboardAttentionView,
     VendorDashboardFleetView,
     VendorDashboardRecentBookingsView,
     VendorDashboardStatsView,
     VendorDashboardStatusView,
     VendorDashboardView,
+    VendorDocumentsSelfView,
+    VendorProfileView,
     VendorTermsView,
     VendorTermsManageView,
 )
 
 urlpatterns = [
+    # Vendor's own profile — auth required, no vendor_id in URL.
+    path("me/", VendorProfileView.as_view(), name="vendor-profile"),
+    # Vendor's own KYC documents — view + submit only, no edit/delete.
+    # Vendor-submitted documents always land PENDING for admin review.
+    path(
+        "me/documents/",
+        VendorDocumentsSelfView.as_view(),
+        name="vendor-documents-self",
+    ),
+    # Vendor's own bank accounts — view + submit only, no edit/delete.
+    # Vendor-submitted accounts always land PENDING for admin review;
+    # they never become the active payout account on their own.
+    path(
+        "me/bank-accounts/",
+        VendorBankAccountsSelfView.as_view(),
+        name="vendor-bank-accounts-self",
+    ),
     # Vendor's own terms — auth required, no vendor_id in URL.
     path("me/terms/", VendorTermsManageView.as_view(), name="vendor-terms-manage"),
     # Public read of a specific vendor's terms — used by the customer app.
@@ -144,5 +170,35 @@ urlpatterns = [
         "admin/team/<int:member_id>/restore/",
         AdminVendorTeamMemberRestoreView.as_view(),
         name="admin-vendor-team-member-restore",
+    ),
+    path(
+        "admin/documents/<int:doc_id>/",
+        AdminDocumentDetailView.as_view(),
+        name="admin-document-detail",
+    ),
+    path(
+        "admin/documents/<int:doc_id>/deactivate/",
+        AdminDocumentDeactivateView.as_view(),
+        name="admin-document-deactivate",
+    ),
+    path(
+        "admin/documents/<int:doc_id>/restore/",
+        AdminDocumentRestoreView.as_view(),
+        name="admin-document-restore",
+    ),
+    path(
+        "admin/bank-accounts/<int:account_id>/",
+        AdminBankAccountDetailView.as_view(),
+        name="admin-bank-account-detail",
+    ),
+    path(
+        "admin/bank-accounts/<int:account_id>/deactivate/",
+        AdminBankAccountDeactivateView.as_view(),
+        name="admin-bank-account-deactivate",
+    ),
+    path(
+        "admin/bank-accounts/<int:account_id>/restore/",
+        AdminBankAccountRestoreView.as_view(),
+        name="admin-bank-account-restore",
     ),
 ]
