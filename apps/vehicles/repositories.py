@@ -699,10 +699,11 @@ class VendorFleetRepository:
         # Every edit sends the listing back for re-review — clears a
         # stale rejection message so the detail page doesn't show an
         # old REJECTED reason next to a listing that's freshly PENDING.
-        listing.status = VehicleListing.Status.PENDING_APPROVAL
-        listing.rejection_reason = ""
-        listing.approved_by = None
-        listing.approved_at = None
+        # listing.status = VehicleListing.Status.PENDING_APPROVAL
+        # listing.rejection_reason = ""
+        # listing.approved_by = None
+        # listing.approved_at = None
+        print("updating listing.............")
         listing.save()
 
         # Full replace — same strategy as create, matches the edit
