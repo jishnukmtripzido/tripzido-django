@@ -288,6 +288,64 @@ class AvailabilityRepository:
         return counts
 
     @staticmethod
+    def get_booked_units_for_listing(
+        listing_id: int,
+        start_datetime,
+        end_datetime=None,
+    ) -> int:
+        """
+        Same overlap logic as get_booked_counts_for_listings, but scoped to
+        a single listing and a range that may be open-ended
+        (end_datetime=None) — matching ListingBlockedPeriod's own
+        indefinite-block semantics. Used by VendorBlockedPeriodService to
+        check a block request against units already held by active
+        customer bookings, so a vendor can still block the units that are
+        genuinely free even when some units are already booked for part of
+        the same period.
+
+        Uses the same "committed" status exclusion as every other capacity
+        check here (CANCELLED / PAYMENT_FAILED / EXPIRED don't hold a
+        unit — everything else, including PENDING_PAYMENT, does), so this
+        can never disagree with what get_remaining_capacity says about the
+        same dates.
+        """
+        from apps.bookings.models import Booking
+
+        if timezone.is_naive(start_datetime):
+            start_datetime = timezone.make_aware(start_datetime)
+        if end_datetime is not None and timezone.is_naive(end_datetime):
+            end_datetime = timezone.make_aware(end_datetime)
+
+        qs = (
+            Booking.objects.filter(listing_id=listing_id)
+            .exclude(
+                status__in=[
+                    Booking.Status.CANCELLED,
+                    Booking.Status.PAYMENT_FAILED,
+                    Booking.Status.EXPIRED,
+                ]
+            )
+            .filter(dropoff_date__gte=start_datetime.date())
+        )
+
+        if end_datetime is not None:
+            qs = qs.filter(pickup_date__lte=end_datetime.date())
+
+        candidates = qs.values_list(
+            "pickup_date", "pickup_time", "dropoff_date", "dropoff_time"
+        )
+
+        count = 0
+        for p_date, p_time, d_date, d_time in candidates:
+            booking_pickup = timezone.make_aware(datetime.combine(p_date, p_time))
+            booking_dropoff = timezone.make_aware(datetime.combine(d_date, d_time))
+            if (
+                end_datetime is None or booking_pickup < end_datetime
+            ) and booking_dropoff > start_datetime:
+                count += 1
+        return count
+
+    @staticmethod
     def get_blocked_counts_for_listings(
         listing_ids: list[int],
         pickup_dt,

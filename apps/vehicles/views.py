@@ -906,9 +906,14 @@ class VendorBlockedPeriodListCreateView(GenericAPIView):
                 vendor.id, serializer.validated_data
             )
         except ValidationError as e:
+            errors = (
+                e.message_dict if hasattr(e, "message_dict") else {"error": [str(e)]}
+            )
             return error_response(
-                message="Validation failed",
-                errors=e.message_dict if hasattr(e, "message_dict") else str(e),
+                message=(
+                    next(iter(errors.values()))[0] if errors else "Validation failed"
+                ),
+                errors=errors,
                 status=status.HTTP_400_BAD_REQUEST,
             )
         output_serializer = VendorBlockedPeriodListSerializer(block)
@@ -944,9 +949,14 @@ class VendorBlockedPeriodDetailView(GenericAPIView):
                 block_id, vendor.id, serializer.validated_data
             )
         except ValidationError as e:
+            errors = (
+                e.message_dict if hasattr(e, "message_dict") else {"error": [str(e)]}
+            )
             return error_response(
-                message="Validation failed",
-                errors=e.message_dict if hasattr(e, "message_dict") else str(e),
+                message=(
+                    next(iter(errors.values()))[0] if errors else "Validation failed"
+                ),
+                errors=errors,
                 status=status.HTTP_400_BAD_REQUEST,
             )
         if block is None:

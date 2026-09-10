@@ -1491,6 +1491,13 @@ class VendorBlockedPeriodService:
                 {"start_datetime": "Start date/time must be in the future."}
             )
 
+        VendorBlockedPeriodService._check_capacity(
+            listing,
+            validated_data["count"],
+            validated_data["start_datetime"],
+            validated_data.get("end_datetime"),
+        )
+
         return VendorBlockedPeriodRepository.create_block(
             listing=listing,
             count=validated_data["count"],
@@ -1502,17 +1509,6 @@ class VendorBlockedPeriodService:
 
     @staticmethod
     def update_block(block_id: int, vendor_id: int, validated_data: dict):
-        """
-        Returns the updated block, or None if not found/not owned by
-        this vendor.
-
-        end_datetime may be omitted/null in validated_data — that's
-        how a vendor either creates or keeps an indefinite block. The
-        "must be in the future" check only applies when a concrete
-        end_datetime is actually being set; an indefinite block has no
-        end to validate. Sending a concrete end_datetime on a
-        previously-indefinite block is how a vendor closes it.
-        """
         block = VendorBlockedPeriodRepository.get_by_id_for_vendor(block_id, vendor_id)
         if block is None:
             return None
@@ -1525,6 +1521,13 @@ class VendorBlockedPeriodService:
                 }
             )
 
+        VendorBlockedPeriodService._check_capacity(
+            block.listing,
+            validated_data["count"],
+            validated_data["start_datetime"],
+            end_datetime,
+        )
+
         return VendorBlockedPeriodRepository.update_block(
             block,
             count=validated_data["count"],
@@ -1533,6 +1536,35 @@ class VendorBlockedPeriodService:
             reason=validated_data.get("reason"),
             note=validated_data.get("note"),
         )
+
+    @staticmethod
+    def _check_capacity(listing, requested_count: int, start_datetime, end_datetime):
+        """
+        Stops a block from claiming units that active customer bookings
+        already hold for the same period — but only for units that
+        actually collide. E.g. a 6-vehicle fleet with 2 already booked for
+        the requested dates still has 4 free, so a 4-unit block is allowed
+        even though 2 units are booked during that window; only a 5+ unit
+        request would be rejected.
+        """
+        booked_units = AvailabilityRepository.get_booked_units_for_listing(
+            listing.id, start_datetime, end_datetime
+        )
+        remaining = listing.available_count - booked_units
+        if requested_count > remaining:
+            reason = (
+                f" — {booked_units} already have a confirmed booking during this period"
+                if booked_units > 0
+                else ""
+            )
+            raise ValidationError(
+                {
+                    "count": (
+                        f"Only {max(remaining, 0)} of {listing.available_count} "
+                        f"vehicle(s) are free for these dates{reason}."
+                    )
+                }
+            )
 
     @staticmethod
     def delete_block(block_id: int, vendor_id: int) -> bool:
