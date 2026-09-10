@@ -28,6 +28,7 @@ class BookingListSerializer(serializers.ModelSerializer):
     paid = serializers.SerializerMethodField()
     deposit = serializers.SerializerMethodField()
     status_label = serializers.CharField(source="get_status_display")
+    listing_amount = serializers.SerializerMethodField()
 
     class Meta:
         model = Booking
@@ -45,6 +46,7 @@ class BookingListSerializer(serializers.ModelSerializer):
             "deposit",
             "status",
             "status_label",
+            "listing_amount",
         ]
 
     def get_image(self, booking):
@@ -87,6 +89,9 @@ class BookingListSerializer(serializers.ModelSerializer):
         # PENDING_PAYMENT/CONFIRMED bookings still owing a balance, and
         # the full amount once nothing remains.
         return float(booking.advance_amount)
+
+    def get_listing_amount(self, booking):
+        return float(booking.listing_amount)
 
     def get_deposit(self, booking):
         return float(booking.security_deposit_amount)
