@@ -46,6 +46,7 @@ class BookingAdmin(SoftDeleteAdmin):
         "advance_amount",
         "remaining_amount",
         "created_at",
+        "created_by",
     )
     list_filter = (
         "status",
@@ -79,6 +80,7 @@ class BookingAdmin(SoftDeleteAdmin):
         "platform_tc_snapshot",
         "cancellation_policy_snapshot",
         "created_at",
+        "created_by",
     )
 
     fieldsets = (
@@ -178,7 +180,7 @@ class BookingAdmin(SoftDeleteAdmin):
             "Metadata",
             {
                 "classes": ("collapse",),
-                "fields": ("created_at",),
+                "fields": ("created_at", "created_by"),
             },
         ),
     )

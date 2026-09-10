@@ -568,6 +568,12 @@ class VendorCancelBookingView(GenericAPIView):
         if cancellation is None:
             return error_response(message=error, status=status.HTTP_400_BAD_REQUEST)
 
+        # cancel_booking_by_vendor re-fetches the row into its own local
+        # `booking` variable to take select_for_update() — that mutation
+        # never touches this view's `booking` object, so serializing it
+        # directly returns pre-cancellation status/available_next_statuses.
+        booking = VendorBookingService.get_booking_detail(booking_id, vendor.id)
+
         detail = VendorBookingDetailSerializer(booking, context={"request": request})
         return success_response(
             data=detail.data,
@@ -672,6 +678,8 @@ class AdminBookingDetailView(GenericAPIView):
                 "customer",
                 "pickup_location",
                 "cancellation",
+                "cancellation__cancelled_by",
+                "created_by",
             )
             .prefetch_related("payments")
             .first()

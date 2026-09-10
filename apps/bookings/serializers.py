@@ -810,6 +810,7 @@ class AdminBookingCancellationSerializer(serializers.Serializer):
     reason_code = serializers.CharField()
     reason_text = serializers.CharField(allow_blank=True)
     cancelled_by_role = serializers.CharField()
+    cancelled_by_name = serializers.SerializerMethodField()
     hours_before_pickup_at_cancellation = serializers.DecimalField(
         max_digits=8, decimal_places=2, allow_null=True
     )
@@ -817,6 +818,9 @@ class AdminBookingCancellationSerializer(serializers.Serializer):
     refundable_amount = serializers.DecimalField(max_digits=12, decimal_places=2)
     forfeited_amount = serializers.DecimalField(max_digits=12, decimal_places=2)
     created_at = serializers.DateTimeField()
+
+    def get_cancelled_by_name(self, obj):
+        return obj.cancelled_by.get_full_name()
 
 
 class AdminBookingDetailSerializer(serializers.ModelSerializer):
@@ -838,6 +842,7 @@ class AdminBookingDetailSerializer(serializers.ModelSerializer):
     )
     payments = AdminPaymentSummarySerializer(many=True, read_only=True)
     cancellation = serializers.SerializerMethodField()
+    created_by_name = serializers.SerializerMethodField()
 
     class Meta:
         model = Booking
@@ -877,6 +882,7 @@ class AdminBookingDetailSerializer(serializers.ModelSerializer):
             "cancelled_by_role",
             "payments",
             "cancellation",
+            "created_by_name",
             "created_at",
         ]
 
@@ -891,14 +897,13 @@ class AdminBookingDetailSerializer(serializers.ModelSerializer):
         return f"{vt.brand.name} {vt.name}"
 
     def get_cancellation(self, obj):
-        # Accessing obj.cancellation directly on a booking with no
-        # cancellation record raises RelatedObjectDoesNotExist rather
-        # than returning None — this getattr guard is what actually
-        # makes the field nullable.
         cancellation = getattr(obj, "cancellation", None)
         if cancellation is None:
             return None
         return AdminBookingCancellationSerializer(cancellation).data
+
+    def get_created_by_name(self, obj):
+        return obj.created_by.get_full_name() if obj.created_by else None
 
 
 class VendorTermsSerializer(serializers.ModelSerializer):

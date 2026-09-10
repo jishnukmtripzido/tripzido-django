@@ -750,6 +750,8 @@ class CancellationService:
                 amount=refundable_amount,
             )
 
+        print("cancellation by role", cancelled_by_role)
+
         vehicle_label = f"{booking.listing.vehicle_type.brand.name} {booking.listing.vehicle_type.name}"
         if cancelled_by_role in ("CUSTOMER", "ADMIN"):
             NotificationService.notify_vendor_and_team(
