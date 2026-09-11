@@ -3,6 +3,7 @@
 from django.db.models import ProtectedError
 from rest_framework.generics import GenericAPIView
 from rest_framework import status
+from rest_framework.exceptions import NotFound
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError
 from apps.vehicles.serializers import (
@@ -473,21 +474,69 @@ class LocationTimingView(GenericAPIView):
 
 class VendorFleetListView(GenericAPIView):
     """
-    GET /api/vehicles/vendor/fleet/
+    GET /api/vehicles/vendor/fleet/?tab=active|inactive
 
-    Lists the authenticated vendor's own listings, every status
-    included. Requires the caller's User to have a linked Vendor
-    profile — this is a second, independent authorization layer on
-    top of login-time role gating: even if a non-vendor token somehow
-    reached this endpoint, there's no vendor_profile to scope data to,
-    so nothing leaks.
+    Lists the authenticated vendor's own listings. No `tab` param
+    returns every status (unchanged — other callers like the Add-Block
+    dropdown rely on this). tab=active/inactive narrows to that tab's
+    statuses, powering the Fleet screen's Active/Inactive tab switcher.
+
+    Requires the caller's User to have a linked Vendor profile — this
+    is a second, independent authorization layer on top of login-time
+    role gating: even if a non-vendor token somehow reached this
+    endpoint, there's no vendor_profile to scope data to, so nothing
+    leaks.
     """
+
+    def _empty_paginated_response(self, request, queryset):
+        """
+        Builds the same {"pagination": {...}, "results": []} shape
+        get_paginated_response() would, but without relying on
+        self.paginator.page — which is never set when paginate_queryset()
+        raised NotFound for an out-of-range page. Infinite-scroll on the
+        frontend naturally probes one page past the end whenever a short
+        list doesn't fill the viewport, so this needs to resolve quietly
+        instead of crashing on self.page.paginator.count.
+        """
+        page_size = self.paginator.get_page_size(request) or 1
+        total = queryset.count()
+        total_pages = max(1, -(-total // page_size))  # ceil division
+
+        try:
+            requested_page = int(
+                request.query_params.get(self.paginator.page_query_param, 1)
+            )
+        except (TypeError, ValueError):
+            requested_page = 1
+
+        return {
+            "pagination": {
+                "total": total,
+                "page": requested_page,
+                "page_size": page_size,
+                "total_pages": total_pages,
+                "next": None,
+                "previous": None,
+            },
+            "results": [],
+        }
 
     permission_classes = [IsAuthenticated]
     serializer_class = VendorFleetListingSerializer
     pagination_class = CustomPagination
 
-    @extend_schema(responses=VendorFleetListingSerializer(many=True))
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name="tab",
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="One of: active, inactive. Omit to return every status.",
+            ),
+        ],
+        responses=VendorFleetListingSerializer(many=True),
+    )
     def get(self, request):
         vendor = request.user.get_vendor_profile()
         if vendor is None:
@@ -496,16 +545,28 @@ class VendorFleetListView(GenericAPIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
+        tab = request.query_params.get("tab")
+
+        listings, error = VendorFleetService.get_fleet_for_vendor(vendor.id, tab)
+        if listings is None:
+            return error_response(message=error, status=status.HTTP_400_BAD_REQUEST)
+
         try:
-            listings = VendorFleetService.get_fleet_for_vendor(vendor.id)
             page = self.paginate_queryset(listings)
+        except NotFound:
+            return success_response(
+                data=self._empty_paginated_response(request, listings),
+                message="No more results",
+                status=status.HTTP_200_OK,
+            )
+
+        try:
             serializer = self.get_serializer(
                 page, many=True, context={"request": request}
             )
             paginated_response = self.get_paginated_response(serializer.data)
-
             return success_response(
-                data=paginated_response.data,  # {"pagination": ..., "results": ...} — same shape VehicleReviewsView already returns
+                data=paginated_response.data,
                 message="Fleet retrieved successfully",
                 status=status.HTTP_200_OK,
             )

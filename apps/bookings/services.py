@@ -1027,13 +1027,15 @@ class VendorBookingService:
         return VendorBookingService.STATUS_FILTER_MAP[tab], True
 
     @staticmethod
-    def get_bookings_for_vendor(vendor_id: int, tab: str):
+    def get_bookings_for_vendor(vendor_id: int, tab: str, search: str | None = None):
         statuses, is_valid = VendorBookingService.statuses_for_tab(tab)
         if not is_valid:
             valid = ", ".join(VendorBookingService.STATUS_FILTER_MAP.keys())
             return None, f"Invalid status filter. Must be one of: {valid}"
         return (
-            VendorBookingRepository.get_bookings_for_vendor(vendor_id, statuses),
+            VendorBookingRepository.get_bookings_for_vendor(
+                vendor_id, statuses, search=search
+            ),
             None,
         )
 

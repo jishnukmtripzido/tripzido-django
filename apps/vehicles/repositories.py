@@ -589,16 +589,15 @@ class LocationTimingRepository:
 class VendorFleetRepository:
 
     @staticmethod
-    def get_listings_for_vendor(vendor_id: int):
+    def get_listings_for_vendor(vendor_id: int, statuses: list[str] | None = None):
         """
-        Returns ALL of a vendor's listings regardless of status
-        (PENDING/APPROVED/PAUSED/SUSPENDED/REJECTED) — this is the
-        vendor managing their own inventory on the Fleet screen, not
-        the public search endpoint, so nothing should be hidden from
-        the owner (contrast with VehicleSearchRepository, which only
-        returns APPROVED listings from APPROVED vendors).
+        Returns a vendor's listings. statuses=None returns every status
+        regardless (unchanged default behavior, still used by callers
+        like the Add-Block dropdown that need the whole fleet). Passing
+        a status list narrows to just those — used by the Fleet screen's
+        Active/Inactive tabs.
         """
-        return (
+        qs = (
             VehicleListing.objects.filter(vendor_id=vendor_id)
             .select_related(
                 "vehicle_type", "vehicle_type__brand", "pickup_location", "pickup_point"
@@ -611,6 +610,9 @@ class VendorFleetRepository:
             )
             .order_by("-created_at")
         )
+        if statuses:
+            qs = qs.filter(status__in=statuses)
+        return qs
 
     @staticmethod
     def get_listing_for_vendor(listing_id: int, vendor_id: int):

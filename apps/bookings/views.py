@@ -438,6 +438,24 @@ class VendorBookingsView(GenericAPIView):
     serializer_class = VendorBookingListSerializer
     pagination_class = CustomPagination
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name="status",
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                required=False,
+            ),
+            OpenApiParameter(
+                name="search",
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description="Search by booking reference, customer name, customer phone, or vehicle type name.",
+            ),
+        ],
+        responses=VendorBookingListSerializer(many=True),
+    )
     def get(self, request):
         vendor = request.user.get_vendor_profile()
         if vendor is None:
@@ -447,7 +465,11 @@ class VendorBookingsView(GenericAPIView):
             )
 
         tab = request.query_params.get("status", "all")
-        bookings, error = VendorBookingService.get_bookings_for_vendor(vendor.id, tab)
+        search = request.query_params.get("search", "").strip() or None
+
+        bookings, error = VendorBookingService.get_bookings_for_vendor(
+            vendor.id, tab, search=search
+        )
         if bookings is None:
             return error_response(message=error, status=status.HTTP_400_BAD_REQUEST)
 

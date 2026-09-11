@@ -1024,9 +1024,48 @@ class LocationTimingService:
 
 class VendorFleetService:
 
+    # "Active" = live and bookable (APPROVED, matches the on/off switch
+    # being ON). "Inactive" bundles everything else a vendor might see
+    # on their own Fleet screen — paused by the vendor, still awaiting
+    # admin approval, rejected, or suspended — all of which mean "not
+    # currently bookable" from the vendor's point of view.
+    TAB_STATUS_MAP: dict[str, list[str]] = {
+        "active": [VehicleListing.Status.APPROVED],
+        "inactive": [
+            VehicleListing.Status.PENDING_APPROVAL,
+            VehicleListing.Status.PAUSED,
+            VehicleListing.Status.REJECTED,
+            VehicleListing.Status.SUSPENDED,
+        ],
+    }
+
     @staticmethod
-    def get_fleet_for_vendor(vendor_id: int):
-        return VendorFleetRepository.get_listings_for_vendor(vendor_id)
+    def statuses_for_tab(tab: str) -> tuple[list[str] | None, bool]:
+        """Returns (statuses, is_valid_tab)."""
+        tab = tab.lower()
+        if tab not in VendorFleetService.TAB_STATUS_MAP:
+            return None, False
+        return VendorFleetService.TAB_STATUS_MAP[tab], True
+
+    @staticmethod
+    def get_fleet_for_vendor(vendor_id: int, tab: str | None = None):
+        """
+        tab=None returns the vendor's entire fleet, every status
+        included — unchanged behavior for existing callers (e.g. the
+        Add-Block listing dropdown) that were never tab-aware.
+
+        tab="active"/"inactive" narrows to that tab's statuses. Returns
+        (queryset, None) on success, or (None, error_message) if `tab`
+        was given but isn't recognised.
+        """
+        if tab is None:
+            return VendorFleetRepository.get_listings_for_vendor(vendor_id), None
+
+        statuses, is_valid = VendorFleetService.statuses_for_tab(tab)
+        if not is_valid:
+            valid = ", ".join(VendorFleetService.TAB_STATUS_MAP.keys())
+            return None, f"Invalid tab. Must be one of: {valid}"
+        return VendorFleetRepository.get_listings_for_vendor(vendor_id, statuses), None
 
     @staticmethod
     def toggle_active_status(listing_id: int, vendor_id: int):

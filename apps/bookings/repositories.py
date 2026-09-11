@@ -1,4 +1,5 @@
-from django.db.models import Prefetch
+from django.db.models.functions import Concat
+from django.db.models import Prefetch, Q, Value, CharField
 from apps.bookings.models import Booking, BookingCancellation
 from apps.payments.models import Payment
 
@@ -67,7 +68,11 @@ class BookingCancellationRepository:
 class VendorBookingRepository:
 
     @staticmethod
-    def get_bookings_for_vendor(vendor_id: int, statuses: list[str] | None = None):
+    def get_bookings_for_vendor(
+        vendor_id: int,
+        statuses: list[str] | None = None,
+        search: str | None = None,
+    ):
         """
         Every booking whose listing belongs to this vendor, newest
         first (Booking.Meta.ordering already sorts -created_at).
@@ -81,6 +86,22 @@ class VendorBookingRepository:
         )
         if statuses:
             qs = qs.filter(status__in=statuses)
+
+        if search:
+            search = search.strip()
+            qs = qs.annotate(
+                customer_full_name=Concat(
+                    "customer__first_name",
+                    Value(" "),
+                    "customer__last_name",
+                    output_field=CharField(),
+                )
+            ).filter(
+                Q(booking_reference__icontains=search)
+                | Q(customer_full_name__icontains=search)
+                | Q(customer__phone_number__icontains=search)
+                | Q(listing__vehicle_type__name__icontains=search)
+            )
         return qs
 
     @staticmethod
