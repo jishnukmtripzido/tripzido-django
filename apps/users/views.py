@@ -785,6 +785,13 @@ class VendorPasswordLoginView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
+        vendor = user.get_vendor_profile()
+        if vendor is None or vendor.status != vendor.Status.APPROVED:
+            return error_response(
+                message="This vendor account is not currently active. Contact support for details.",
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         if not user.has_usable_password():
             LoginLogService.record(
                 "VENDOR",
