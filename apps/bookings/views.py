@@ -100,8 +100,8 @@ class CreateBookingOrderView(GenericAPIView):
                 message="Invalid date or quantity format",
                 status=status.HTTP_400_BAD_REQUEST,
             )
-
-        if data["platform"] == "web":
+        platform = data.get("platform", "web")
+        if platform == "web":
             return_url = f"{settings.FRONTEND_BASE_URL}/checkout/processing?order_id={{order_id}}"
         else:
             return_url = f"{settings.CUSTOMER_PAYMENT_RETURN_URL}?order_id={{order_id}}"
