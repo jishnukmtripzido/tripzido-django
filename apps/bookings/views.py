@@ -72,7 +72,6 @@ class CreateBookingOrderView(GenericAPIView):
             "pickup_datetime",
             "dropoff_datetime",
             "quantity",
-            "platform",  # "web" or "mobile" — used to determine the return_url
         ]
         missing = [f for f in required if f not in data]
         if missing:
