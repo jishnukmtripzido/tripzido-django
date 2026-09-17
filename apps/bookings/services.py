@@ -37,6 +37,7 @@ from apps.payments.models import Payment
 from apps.notifications.services import NotificationService
 from apps.notifications.models import Notification
 from apps.logs.services import ActivityLogService
+from apps.notifications.tasks import send_booking_confirmation_whatsapp
 
 
 def _generate_booking_reference() -> str:
@@ -437,6 +438,23 @@ class BookingCheckoutService:
                 link=f"/bookings/{first_booking.id}",
             )
 
+            # ── WhatsApp confirmation to the customer ──
+            customer = first_booking.customer
+            customer_phone = (
+                f"{customer.phone_country_code}{customer.phone_number}".replace("+", "")
+            )
+
+            transaction.on_commit(
+                lambda: send_booking_confirmation_whatsapp.delay(
+                    phone_number=customer_phone,
+                    booking_reference=first_booking.booking_reference,
+                    vehicle_name=vehicle_name,
+                    pickup_date=str(first_booking.pickup_date),
+                    pickup_time=str(first_booking.pickup_time),
+                    pickup_location=str(first_booking.pickup_location),
+                )
+            )
+
         return True
 
     @staticmethod
@@ -749,8 +767,6 @@ class CancellationService:
                 cancellation=cancellation,
                 amount=refundable_amount,
             )
-
-        print("cancellation by role", cancelled_by_role)
 
         vehicle_label = f"{booking.listing.vehicle_type.brand.name} {booking.listing.vehicle_type.name}"
         if cancelled_by_role in ("CUSTOMER", "ADMIN"):

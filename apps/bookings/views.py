@@ -72,6 +72,7 @@ class CreateBookingOrderView(GenericAPIView):
             "pickup_datetime",
             "dropoff_datetime",
             "quantity",
+            "platform",  # "web" or "mobile" — used to determine the return_url
         ]
         missing = [f for f in required if f not in data]
         if missing:
@@ -100,9 +101,10 @@ class CreateBookingOrderView(GenericAPIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        return_url = (
-            f"{settings.FRONTEND_BASE_URL}/checkout/processing?order_id={{order_id}}"
-        )
+        if data["platform"] == "web":
+            return_url = f"{settings.FRONTEND_BASE_URL}/checkout/processing?order_id={{order_id}}"
+        else:
+            return_url = f"{settings.CUSTOMER_PAYMENT_RETURN_URL}?order_id={{order_id}}"
 
         result, error = BookingCheckoutService.create_order(
             customer=request.user,

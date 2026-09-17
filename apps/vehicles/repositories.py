@@ -763,7 +763,6 @@ class VendorFleetRepository:
         # listing.rejection_reason = ""
         # listing.approved_by = None
         # listing.approved_at = None
-        print("updating listing.............")
         listing.save()
 
         # Full replace — same strategy as create, matches the edit
