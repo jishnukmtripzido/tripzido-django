@@ -65,3 +65,39 @@ def expire_stale_pending_bookings():
         logger.info("Expired %s stale pending booking(s).", expired_count)
 
     return expired_count
+
+
+@shared_task
+def auto_cancel_no_show_bookings():
+    """
+    Finds every CONFIRMED booking whose dropoff_date has already passed —
+    the customer never came in to pick up (or return) the vehicle — and
+    cancels it so it doesn't sit in CONFIRMED forever.
+
+    Mirrors the CONFIRMED -> CANCELLED path VendorBookingService.update_status
+    takes for a manual vendor cancellation: flips status and records
+    cancelled_at/cancelled_by_role only. It does not run refund/forfeiture
+    accounting or create a BookingCancellation row, same as that path —
+    there's nothing to refund since the trip never started.
+
+    Compares against dropoff_date (not a combined dropoff datetime) since
+    this runs once a day at midnight: by the time it runs, any CONFIRMED
+    booking with a dropoff_date before today is at least a full day past
+    its drop-off, so the exact drop-off time doesn't need to be checked.
+    """
+    today = timezone.localdate()
+    now = timezone.now()
+
+    cancelled_count = Booking.objects.filter(
+        status=Booking.Status.CONFIRMED,
+        dropoff_date__lt=today,
+    ).update(
+        status=Booking.Status.CANCELLED,
+        cancelled_at=now,
+        cancelled_by_role=Booking.CancelledBy.SYSTEM,
+    )
+
+    if cancelled_count:
+        logger.info("Auto-cancelled %s no-show confirmed booking(s).", cancelled_count)
+
+    return cancelled_count

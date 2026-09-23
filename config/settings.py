@@ -164,6 +164,10 @@ CELERY_BEAT_SCHEDULE = {
         "task": "apps.bookings.tasks.expire_stale_pending_bookings",
         "schedule": 60.0,  # every 60 seconds — tune based on how tight your 15-min window matters
     },
+    "auto-cancel-no-show-bookings": {
+        "task": "apps.bookings.tasks.auto_cancel_no_show_bookings",
+        "schedule": crontab(hour=0, minute=0),  # once a day, at midnight
+    },
 }
 
 FAST2SMS_API_KEY = env("FAST2SMS_API_KEY")
