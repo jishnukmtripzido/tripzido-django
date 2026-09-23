@@ -1393,11 +1393,18 @@ class VendorListingCreateService:
             packages,
         )
 
-        NotificationService.notify_all_staff(
-            notification_type=Notification.NotificationType.LISTING_SUBMITTED,
-            title="New listing submitted for review",
-            message=f"{vendor.business_name} submitted {vehicle_type.name} for approval",
-            link=f"/listings/{listing.id}",
+        # on_commit: staff only hear about the listing once it's actually
+        # saved — if anything later in this transaction fails and rolls
+        # back, no notification points at a listing that doesn't exist.
+        message = f"{vendor.business_name} submitted {vehicle_type.name} for approval"
+        link = f"/listings/{listing.id}"
+        transaction.on_commit(
+            lambda: NotificationService.notify_all_staff(
+                notification_type=Notification.NotificationType.LISTING_SUBMITTED,
+                title="New listing submitted for review",
+                message=message,
+                link=link,
+            )
         )
 
         return listing
@@ -1418,6 +1425,48 @@ class VendorListingImageService:
 
 
 class VendorListingUpdateService:
+
+    # Edits to any of these send an APPROVED/PAUSED listing back to admin
+    # review. Add more names here (e.g. "pickup_location",
+    # "security_deposit_amount") when the business decides they need
+    # review too — names match VendorFleetRepository.get_listing_changes.
+    REAPPROVAL_FIELDS = {"pricing_packages"}
+
+    # Human-readable names for the staff notification message.
+    FIELD_LABELS = {
+        "pricing_packages": "pricing packages",
+        "available_count": "fleet size",
+        "security_deposit_amount": "security deposit",
+        "km_limit_per_day": "km limit per day",
+        "excess_charge_per_km": "excess km charge",
+        "late_return_penalty_per_hour": "late return penalty",
+        "doorstep_delivery_enabled": "doorstep delivery",
+        "operating_hours_start": "operating hours",
+        "operating_hours_end": "operating hours",
+        "pickup_location": "pickup location",
+        "pickup_point": "pickup point",
+        "schedule_template": "schedule",
+    }
+
+    @staticmethod
+    def _describe_changes(changes: set[str]) -> str:
+        labels = {
+            VendorListingUpdateService.FIELD_LABELS.get(c, c.replace("_", " "))
+            for c in changes
+        }
+        return ", ".join(sorted(labels))
+
+    @staticmethod
+    def _needs_reapproval(listing, changes: set[str]) -> bool:
+        # Suspension is admin-imposed — a vendor edit must never move a
+        # suspended listing into PENDING and out of the suspended state.
+        if listing.status == VehicleListing.Status.SUSPENDED:
+            return False
+        # AdminListingService has no transition out of REJECTED, so a
+        # vendor edit is the only way back into review — any edit counts.
+        if listing.status == VehicleListing.Status.REJECTED:
+            return True
+        return bool(changes & VendorListingUpdateService.REAPPROVAL_FIELDS)
 
     @staticmethod
     @transaction.atomic
@@ -1484,7 +1533,8 @@ class VendorListingUpdateService:
             "operating_hours_end": validated_data.get("operating_hours_end"),
         }
 
-        updated_listing = VendorFleetRepository.update_listing(
+        # Must run before update_listing mutates the instance.
+        changes = VendorFleetRepository.get_listing_changes(
             listing,
             pickup_location,
             pickup_point,
@@ -1492,16 +1542,50 @@ class VendorListingUpdateService:
             listing_fields,
             packages,
         )
+        if not changes:
+            # Form re-submitted with nothing edited — no save, no
+            # status change, no notification.
+            return listing
 
-        # VendorFleetRepository.update_listing unconditionally resets
-        # status back to PENDING_APPROVAL on every edit — so a
-        # successful call here always genuinely means "needs
-        # re-review," no conditional check required.
-        NotificationService.notify_all_staff(
-            notification_type=Notification.NotificationType.LISTING_SUBMITTED,
-            title="Listing resubmitted for review",
-            message=f"{vendor.business_name} updated {listing.vehicle_type.name} — pending re-approval",
-            link=f"/listings/{updated_listing.id}",
+        needs_reapproval = VendorListingUpdateService._needs_reapproval(
+            listing, changes
+        )
+
+        updated_listing = VendorFleetRepository.update_listing(
+            listing,
+            pickup_location,
+            pickup_point,
+            schedule_template,
+            listing_fields,
+            packages,
+            replace_packages="pricing_packages" in changes,
+            reset_to_pending=needs_reapproval,
+        )
+
+        vehicle_name = updated_listing.vehicle_type.name
+        changed_text = VendorListingUpdateService._describe_changes(changes)
+
+        if needs_reapproval:
+            notification_type = Notification.NotificationType.LISTING_SUBMITTED
+            title = "Listing resubmitted for review"
+            message = (
+                f"{vendor.business_name} updated {changed_text} on "
+                f"{vehicle_name} — pending re-approval"
+            )
+        else:
+            # Requires LISTING_UPDATED on Notification.NotificationType.
+            notification_type = Notification.NotificationType.LISTING_UPDATED
+            title = "Listing updated"
+            message = f"{vendor.business_name} updated {changed_text} on {vehicle_name}"
+
+        link = f"/listings/{updated_listing.id}"
+        transaction.on_commit(
+            lambda: NotificationService.notify_all_staff(
+                notification_type=notification_type,
+                title=title,
+                message=message,
+                link=link,
+            )
         )
 
         return updated_listing
@@ -1636,11 +1720,10 @@ class VendorPickupPointService:
 class AdminListingService:
 
     # Same "REJECTED is terminal here" logic as vendor booking status —
-    # but note a REJECTED listing isn't a true dead end: when the
-    # vendor edits and re-saves it, VendorFleetRepository.update_listing
-    # already resets status to PENDING_APPROVAL automatically (built
-    # earlier in the vendor portal work), so re-review happens through
-    # that path, not a transition from this endpoint.
+    # but note a REJECTED listing isn't a true dead end: any vendor edit
+    # to a REJECTED listing resets it to PENDING_APPROVAL (see
+    # VendorListingUpdateService._needs_reapproval), so re-review happens
+    # through that path, not a transition from this endpoint.
     ALLOWED_TRANSITIONS = {
         VehicleListing.Status.PENDING_APPROVAL: [
             VehicleListing.Status.APPROVED,

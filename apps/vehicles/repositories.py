@@ -1,3 +1,5 @@
+# apps/vehicles/repositories.py
+
 from django.db.models import Prefetch, Avg, Count, Sum, Max, Q
 from django.db import transaction
 from apps.vehicles.models import (
@@ -17,6 +19,8 @@ from apps.vehicles.models import (
 from apps.vendors.models import Vendor, VendorTerms, VendorSubscription
 from django.utils import timezone
 from datetime import datetime, time
+from collections import Counter
+from decimal import Decimal
 
 
 class BrandRepository:
@@ -586,7 +590,111 @@ class LocationTimingRepository:
         return True, days
 
 
+def _num(value):
+    # Normalizes int/float/str/Decimal so 1500, "1500.00" and Decimal("1500.0") compare equal
+    return None if value is None else Decimal(str(value))
+
+
 class VendorFleetRepository:
+
+    # ── Change detection ──────────────────────────────────────────────
+
+    @staticmethod
+    def _same_value(old, new) -> bool:
+        """
+        Equality that tolerates the type differences between what the DB
+        returns and what the serializer hands us — e.g. Decimal("500.00")
+        from the DB vs 500 from validated_data would otherwise read as a
+        change. bool is checked before numbers since bool is an int
+        subclass and Decimal(str(True)) isn't valid.
+        """
+        if old is None or new is None:
+            return old is None and new is None
+        if isinstance(old, bool) or isinstance(new, bool):
+            return old == new
+        if isinstance(old, (int, float, Decimal)):
+            return _num(old) == _num(new)
+        return old == new
+
+    @staticmethod
+    def _package_signature(
+        package_type_id, price, pay_at_pickup, partial_pct, km_limit
+    ):
+        return (
+            package_type_id,
+            _num(price),
+            bool(pay_at_pickup),
+            _num(partial_pct),
+            _num(km_limit),
+        )
+
+    @staticmethod
+    def _packages_changed(listing: VehicleListing, packages: list[dict]) -> bool:
+        existing = Counter(
+            VendorFleetRepository._package_signature(
+                p.package_type_id,
+                p.price,
+                p.pay_at_pickup_enabled,
+                p.partial_payment_percentage,
+                p.km_limit,
+            )
+            for p in listing.pricing_packages.all()
+        )
+        incoming = Counter(
+            VendorFleetRepository._package_signature(
+                p["package_type"].id,
+                p["price"],
+                p.get("pay_at_pickup_enabled", False),
+                p.get("partial_payment_percentage"),
+                p.get("km_limit"),
+            )
+            for p in packages
+        )
+        return existing != incoming
+
+    @staticmethod
+    def get_listing_changes(
+        listing: VehicleListing,
+        pickup_location,
+        pickup_point,
+        schedule_template,
+        listing_fields: dict,
+        packages: list[dict],
+    ) -> set[str]:
+        """
+        Returns the names of everything the incoming edit would change —
+        listing_fields keys, "pickup_location" / "pickup_point" /
+        "schedule_template", and "pricing_packages". Must be called
+        BEFORE update_listing mutates the instance, or every comparison
+        is against the new values.
+
+        This only reports WHAT changed. Deciding what a change means
+        (re-approval, notifications) is business policy and lives in
+        VendorListingUpdateService.
+        """
+        changes = set()
+
+        for field, new_value in listing_fields.items():
+            if not VendorFleetRepository._same_value(
+                getattr(listing, field), new_value
+            ):
+                changes.add(field)
+
+        relations = {
+            "pickup_location": (listing.pickup_location_id, pickup_location),
+            "pickup_point": (listing.pickup_point_id, pickup_point),
+            "schedule_template": (listing.schedule_template_id, schedule_template),
+        }
+        for name, (old_id, new_obj) in relations.items():
+            if old_id != (new_obj.id if new_obj else None):
+                changes.add(name)
+
+        if VendorFleetRepository._packages_changed(listing, packages):
+            changes.add("pricing_packages")
+
+        return changes
+
+    # ── Reads ─────────────────────────────────────────────────────────
 
     @staticmethod
     def get_listings_for_vendor(vendor_id: int, statuses: list[str] | None = None):
@@ -654,6 +762,8 @@ class VendorFleetRepository:
             )
             .first()
         )
+
+    # ── Writes ────────────────────────────────────────────────────────
 
     @staticmethod
     @transaction.atomic
@@ -750,38 +860,51 @@ class VendorFleetRepository:
         schedule_template,
         listing_fields: dict,
         packages: list[dict],
+        *,
+        replace_packages: bool,
+        reset_to_pending: bool,
     ) -> VehicleListing:
+        """
+        Applies an edit. Whether packages get replaced and whether the
+        listing goes back to review are decided by the caller (see
+        VendorListingUpdateService) from get_listing_changes — this
+        method just carries them out.
+        """
         for field, value in listing_fields.items():
             setattr(listing, field, value)
         listing.pickup_location = pickup_location
         listing.pickup_point = pickup_point
         listing.schedule_template = schedule_template
-        # Every edit sends the listing back for re-review — clears a
-        # stale rejection message so the detail page doesn't show an
-        # old REJECTED reason next to a listing that's freshly PENDING.
-        # listing.status = VehicleListing.Status.PENDING_APPROVAL
-        # listing.rejection_reason = ""
-        # listing.approved_by = None
-        # listing.approved_at = None
+
+        if reset_to_pending:
+            # Clears a stale rejection message so the detail page doesn't
+            # show an old REJECTED reason next to a freshly PENDING listing.
+            listing.status = VehicleListing.Status.PENDING_APPROVAL
+            listing.rejection_reason = ""
+            listing.approved_by = None
+            listing.approved_at = None
+
         listing.save()
 
-        # Full replace — same strategy as create, matches the edit
-        # form always submitting the complete current package list
-        # rather than a partial diff.
-        listing.pricing_packages.all().delete()
-        package_rows = [
-            PricingPackage(
-                listing=listing,
-                package_type=p["package_type"],
-                duration_hours=p["package_type"].duration_hours,
-                price=p["price"],
-                pay_at_pickup_enabled=p.get("pay_at_pickup_enabled", False),
-                partial_payment_percentage=p.get("partial_payment_percentage"),
-                km_limit=p.get("km_limit"),
-            )
-            for p in packages
-        ]
-        PricingPackage.objects.bulk_create(package_rows)
+        # Full replace — same strategy as create, matches the edit form
+        # always submitting the complete current package list rather
+        # than a partial diff. Skipped entirely when nothing changed.
+        if replace_packages:
+            listing.pricing_packages.all().delete()
+            package_rows = [
+                PricingPackage(
+                    listing=listing,
+                    package_type=p["package_type"],
+                    duration_hours=p["package_type"].duration_hours,
+                    price=p["price"],
+                    pay_at_pickup_enabled=p.get("pay_at_pickup_enabled", False),
+                    partial_payment_percentage=p.get("partial_payment_percentage"),
+                    km_limit=p.get("km_limit"),
+                )
+                for p in packages
+            ]
+            PricingPackage.objects.bulk_create(package_rows)
+
         return listing
 
     @staticmethod
