@@ -278,6 +278,9 @@ CASHFREE_ENVIRONMENT = env("CASHFREE_ENVIRONMENT", default="SANDBOX")  # or "PRO
 CASHFREE_API_VERSION = "2023-08-01"
 PLATFORM_TC_VERSION = "1.0"  # placeholder until real T&C versioning exists
 FRONTEND_BASE_URL = env("FRONTEND_BASE_URL", default="http://localhost:3000")
+CUSTOMER_PAYMENT_RETURN_URL = env(
+    "CUSTOMER_PAYMENT_RETURN_URL", default="tripzido://checkout/return"
+)
 
 
 EMAIL_BACKEND = env(
