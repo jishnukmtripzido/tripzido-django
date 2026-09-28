@@ -18,3 +18,4 @@ phonenumbers>=9.0.33
 django-summernote>=0.8.20.0
 django-celery-beat>=2.9.0
 weasyprint>=69.0
+gunicorn>=26.2.0

@@ -22,6 +22,7 @@ from apps.payments.services import (
     AdminPaymentService,
 )
 from apps.payments.repositories import AdminRefundRepository
+from apps.payments.models import VendorPayout
 from apps.core.responses import success_response, error_response
 from apps.core.pagination import CustomPagination
 from apps.core.permissions import IsStaffRole
@@ -29,12 +30,13 @@ from apps.core.permissions import IsStaffRole
 
 class VendorPayoutsView(GenericAPIView):
     """
-    GET /api/payments/vendor/payouts/
+    GET /api/payments/vendor/payouts/?status=&page=
 
     Lists every payout ever made to the authenticated vendor, newest
-    first. Same vendor_profile ownership check as every other
-    vendor-scoped endpoint in this codebase — a token with no linked
-    Vendor profile gets nothing.
+    first, optionally filtered by status (PENDING / PAID / FAILED).
+    Same vendor_profile ownership check as every other vendor-scoped
+    endpoint in this codebase — a token with no linked Vendor profile
+    gets nothing.
     """
 
     permission_classes = [IsAuthenticated]
@@ -49,7 +51,14 @@ class VendorPayoutsView(GenericAPIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        payouts = VendorPayoutService.get_for_vendor(vendor.id)
+        status_filter = request.query_params.get("status") or None
+        if status_filter and status_filter not in VendorPayout.Status.values:
+            return error_response(
+                message="Invalid status filter.",
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        payouts = VendorPayoutService.get_for_vendor(vendor.id, status_filter)
         page = self.paginate_queryset(payouts)
         serializer = self.get_serializer(page, many=True)
         paginated_response = self.get_paginated_response(serializer.data)

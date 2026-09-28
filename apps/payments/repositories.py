@@ -8,14 +8,17 @@ from apps.vendors.models import BankAccount
 class VendorPayoutRepository:
 
     @staticmethod
-    def get_for_vendor(vendor_id: int):
+    def get_for_vendor(vendor_id: int, status_filter=None):
         """
         Every payout ever made to this vendor, newest first — powers
-        the Ledger list screen. Not filtered by status; the frontend
-        badge (Pending/Paid/Failed) reflects VendorPayout.status
-        directly, same as the mock "SUCCESS" badge it's replacing.
+        the Ledger list screen. Optionally narrowed to one status
+        (the Ledger's filter sheet); the frontend badge
+        (Pending/Paid/Failed) reflects VendorPayout.status directly.
         """
-        return VendorPayout.objects.filter(vendor_id=vendor_id).order_by("-created_at")
+        qs = VendorPayout.objects.filter(vendor_id=vendor_id).order_by("-created_at")
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+        return qs
 
     @staticmethod
     def get_detail_for_vendor(payout_id: int, vendor_id: int):

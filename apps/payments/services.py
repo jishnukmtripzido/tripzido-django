@@ -15,8 +15,8 @@ from apps.logs.services import ActivityLogService
 class VendorPayoutService:
 
     @staticmethod
-    def get_for_vendor(vendor_id: int):
-        return VendorPayoutRepository.get_for_vendor(vendor_id)
+    def get_for_vendor(vendor_id: int, status_filter=None):
+        return VendorPayoutRepository.get_for_vendor(vendor_id, status_filter)
 
     @staticmethod
     def get_detail_for_vendor(payout_id: int, vendor_id: int):
