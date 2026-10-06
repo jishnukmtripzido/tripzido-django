@@ -18,6 +18,12 @@ def parse_client_datetime(value: str) -> datetime:
     Python 3.11, datetime.fromisoformat() couldn't parse "Z" at all
     and raised ValueError outright, which JS's Date.toISOString()
     commonly produces.
+
+    The result is always converted to local time (TIME_ZONE,
+    Asia/Kolkata), again matching DRF's DateTimeField. Callers use
+    .date()/.time()/.weekday() directly for opening-hours checks and
+    for Booking.pickup_date/pickup_time, so a value left in UTC (e.g.
+    10:00 IST sent as "04:30Z") would be checked and stored as 04:30.
     """
     value = value.strip()
     if value.endswith("Z"):
@@ -25,4 +31,4 @@ def parse_client_datetime(value: str) -> datetime:
     parsed = datetime.fromisoformat(value)
     if timezone.is_naive(parsed):
         parsed = timezone.make_aware(parsed)
-    return parsed
+    return timezone.localtime(parsed)

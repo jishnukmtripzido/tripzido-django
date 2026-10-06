@@ -237,28 +237,76 @@ class AvailabilityRepository:
         )
 
     @staticmethod
-    def get_booked_counts_for_listings(
-        listing_ids: list[int],
-        pickup_dt,
-        dropoff_dt,
-    ) -> dict[int, int]:
+    def _as_local(dt):
+        """Aware, local-time (TIME_ZONE) version of dt."""
+        if timezone.is_naive(dt):
+            dt = timezone.make_aware(dt)
+        return timezone.localtime(dt)
+
+    @staticmethod
+    def _peak_units(intervals, window_start, window_end=None) -> int:
+        """
+        Highest number of units in use AT THE SAME MOMENT within
+        [window_start, window_end) — not the number of intervals that
+        touch the window. Two back-to-back bookings that never run
+        together (one ends Tuesday 10 AM, the next starts Tuesday 2 PM)
+        only need one vehicle, so they count as 1 here, not 2.
+
+        intervals are (start, end, units); end=None means open-ended
+        (an indefinite block). window_end=None means the window itself is
+        open-ended. Intervals are half-open, so one ending exactly when
+        another starts is not concurrent — same back-to-back rule as the
+        overlap checks.
+        """
+        events = []
+        for start, end, units in intervals:
+            clipped_start = max(start, window_start)
+            if window_end is None:
+                clipped_end = end
+            elif end is None:
+                clipped_end = window_end
+            else:
+                clipped_end = min(end, window_end)
+
+            if clipped_end is not None and clipped_start >= clipped_end:
+                continue
+            events.append((clipped_start, units))
+            if clipped_end is not None:
+                events.append((clipped_end, -units))
+
+        # At the same instant, releases (negative) sort before claims, so
+        # a unit returned at 10:00 can be taken again at 10:00.
+        events.sort(key=lambda event: (event[0], event[1]))
+
+        peak = current = 0
+        for _, delta in events:
+            current += delta
+            peak = max(peak, current)
+        return peak
+
+    @staticmethod
+    def _holding_booking_intervals(listing_ids: list[int], start_dt, end_dt=None):
+        """
+        Returns (listing_id, booking_pickup, booking_dropoff) for every
+        booking that still holds a unit and may fall within
+        [start_dt, end_dt) — end_dt=None meaning open-ended.
+
+        A booking stops holding its unit once it's:
+          - CANCELLED / PAYMENT_FAILED / EXPIRED, or
+          - COMPLETED — the vehicle is back, possibly before the booked
+            dropoff time, so it's free for the rest of that period, or
+          - PENDING_PAYMENT past its expires_at — an abandoned checkout
+            releases its unit on time even if expire_stale_pending_bookings
+            hasn't run yet (e.g. Celery is down).
+            BookingCheckoutService.confirm_payment_success treats those
+            the same way, so a late payment can't revive a released unit.
+        """
         from apps.bookings.models import Booking
 
-        # Normalize both search-side datetimes to aware up front — every
-        # comparison below is then unambiguously aware-vs-aware, with no
-        # conditional branch and no silent naive-vs-naive fallback path
-        # that could compare two differently-intended "naive" values
-        # without anyone noticing.
-        if timezone.is_naive(pickup_dt):
-            pickup_dt = timezone.make_aware(pickup_dt)
-        if timezone.is_naive(dropoff_dt):
-            dropoff_dt = timezone.make_aware(dropoff_dt)
-
-        candidates = (
+        qs = (
             Booking.objects.filter(
                 listing_id__in=listing_ids,
-                dropoff_date__gte=pickup_dt.date(),
-                pickup_date__lte=dropoff_dt.date(),
+                dropoff_date__gte=start_dt.date(),
             )
             .exclude(
                 status__in=[
@@ -268,29 +316,77 @@ class AvailabilityRepository:
                     Booking.Status.COMPLETED,
                 ]
             )
-            .values_list(
-                "listing_id",
-                "pickup_date",
-                "pickup_time",
-                "dropoff_date",
-                "dropoff_time",
+            .exclude(
+                status=Booking.Status.PENDING_PAYMENT,
+                expires_at__lt=timezone.now(),
             )
         )
+        if end_dt is not None:
+            qs = qs.filter(pickup_date__lte=end_dt.date())
 
-        counts: dict[int, int] = {}
-        for listing_id, p_date, p_time, d_date, d_time in candidates:
-            # Always made aware, unconditionally — same reasoning as the
-            # serializer fix: pickup_date/pickup_time are plain DateField/
-            # TimeField with no timezone concept of their own, but they're
-            # intended to represent Asia/Kolkata wall-clock moments,
-            # matching TIME_ZONE.
-            booking_pickup = timezone.make_aware(datetime.combine(p_date, p_time))
-            booking_dropoff = timezone.make_aware(datetime.combine(d_date, d_time))
+        # pickup_date/pickup_time are plain Date/TimeFields meant as
+        # Asia/Kolkata wall-clock moments (TIME_ZONE), so they're always
+        # made aware in that zone.
+        return [
+            (
+                listing_id,
+                timezone.make_aware(datetime.combine(p_date, p_time)),
+                timezone.make_aware(datetime.combine(d_date, d_time)),
+            )
+            for listing_id, p_date, p_time, d_date, d_time in qs.values_list(
+                "listing_id", "pickup_date", "pickup_time", "dropoff_date", "dropoff_time"
+            )
+        ]
 
-            if booking_pickup < dropoff_dt and booking_dropoff > pickup_dt:
-                counts[listing_id] = counts.get(listing_id, 0) + 1
+    @staticmethod
+    def get_committed_units_for_listings(
+        listing_ids: list[int],
+        pickup_dt,
+        dropoff_dt,
+    ) -> dict[int, int]:
+        """
+        Returns {listing_id: units committed for this date range} — the
+        peak number of units out at the same moment, counting active
+        customer bookings (1 unit each) and vendor blocked periods (their
+        `count` units each) on one shared timeline. Listings with nothing
+        committed are omitted.
 
-        return counts
+        Free units for the range = listing.available_count - this value.
+        """
+        if not listing_ids:
+            return {}
+
+        pickup_dt = AvailabilityRepository._as_local(pickup_dt)
+        dropoff_dt = AvailabilityRepository._as_local(dropoff_dt)
+
+        intervals: dict[int, list] = {}
+        for listing_id, start, end in AvailabilityRepository._holding_booking_intervals(
+            listing_ids, pickup_dt, dropoff_dt
+        ):
+            intervals.setdefault(listing_id, []).append((start, end, 1))
+
+        # A null end_datetime is an indefinite block. Without the isnull
+        # branch, `end_datetime__gt=pickup_dt` evaluates to NULL in SQL for
+        # those rows and they'd be silently excluded.
+        blocks = (
+            ListingBlockedPeriod.objects.filter(
+                listing_id__in=listing_ids,
+                start_datetime__lt=dropoff_dt,
+            )
+            .filter(Q(end_datetime__isnull=True) | Q(end_datetime__gt=pickup_dt))
+            .values_list("listing_id", "start_datetime", "end_datetime", "count")
+        )
+        for listing_id, start, end, count in blocks:
+            intervals.setdefault(listing_id, []).append((start, end, count))
+
+        committed = {}
+        for listing_id, listing_intervals in intervals.items():
+            peak = AvailabilityRepository._peak_units(
+                listing_intervals, pickup_dt, dropoff_dt
+            )
+            if peak:
+                committed[listing_id] = peak
+        return committed
 
     @staticmethod
     def get_booked_units_for_listing(
@@ -299,85 +395,34 @@ class AvailabilityRepository:
         end_datetime=None,
     ) -> int:
         """
-        Same overlap logic as get_booked_counts_for_listings, but scoped to
-        a single listing and a range that may be open-ended
-        (end_datetime=None) — matching ListingBlockedPeriod's own
-        indefinite-block semantics. Used by VendorBlockedPeriodService to
-        check a block request against units already held by active
-        customer bookings, so a vendor can still block the units that are
-        genuinely free even when some units are already booked for part of
-        the same period.
+        Peak units held by customer bookings alone for a single listing
+        over a range that may be open-ended (end_datetime=None) — matching
+        ListingBlockedPeriod's own indefinite-block semantics. Used by
+        VendorBlockedPeriodService to check a block request against units
+        already held by bookings, so a vendor can still block the units
+        that are genuinely free even when some are booked for part of the
+        same period.
 
-        Uses the same "committed" status exclusion as every other capacity
-        check here (CANCELLED / PAYMENT_FAILED / EXPIRED don't hold a
-        unit — everything else, including PENDING_PAYMENT, does), so this
-        can never disagree with what get_remaining_capacity says about the
-        same dates.
+        Blocks aren't counted here: ListingBlockedPeriod.clean() already
+        rejects a block that overlaps another block on the same listing.
+
+        Same holding rules as get_committed_units_for_listings, so this
+        can never disagree with what search/checkout say about the same
+        dates.
         """
-        from apps.bookings.models import Booking
-
-        if timezone.is_naive(start_datetime):
-            start_datetime = timezone.make_aware(start_datetime)
-        if end_datetime is not None and timezone.is_naive(end_datetime):
-            end_datetime = timezone.make_aware(end_datetime)
-
-        qs = (
-            Booking.objects.filter(listing_id=listing_id)
-            .exclude(
-                status__in=[
-                    Booking.Status.CANCELLED,
-                    Booking.Status.PAYMENT_FAILED,
-                    Booking.Status.EXPIRED,
-                    Booking.Status.COMPLETED,
-                ]
-            )
-            .filter(dropoff_date__gte=start_datetime.date())
-        )
-
+        start_datetime = AvailabilityRepository._as_local(start_datetime)
         if end_datetime is not None:
-            qs = qs.filter(pickup_date__lte=end_datetime.date())
+            end_datetime = AvailabilityRepository._as_local(end_datetime)
 
-        candidates = qs.values_list(
-            "pickup_date", "pickup_time", "dropoff_date", "dropoff_time"
-        )
-
-        count = 0
-        for p_date, p_time, d_date, d_time in candidates:
-            booking_pickup = timezone.make_aware(datetime.combine(p_date, p_time))
-            booking_dropoff = timezone.make_aware(datetime.combine(d_date, d_time))
-            if (
-                end_datetime is None or booking_pickup < end_datetime
-            ) and booking_dropoff > start_datetime:
-                count += 1
-        return count
-
-    @staticmethod
-    def get_blocked_counts_for_listings(
-        listing_ids: list[int],
-        pickup_dt,
-        dropoff_dt,
-    ) -> dict[int, int]:
-        """
-        Returns {listing_id: total units taken out of service by
-        overlapping ListingBlockedPeriod rows for this date range}.
-        Sums `count` across all overlapping blocks for a listing.
-
-        A null end_datetime means an indefinite block — treated as
-        extending to +infinity, so it overlaps any requested range whose
-        start is on/after the block's own start. Without the isnull
-        branch, `end_datetime__gt=pickup_dt` evaluates to NULL (not True)
-        in SQL for those rows and they'd be silently excluded.
-        """
-        rows = (
-            ListingBlockedPeriod.objects.filter(
-                listing_id__in=listing_ids,
-                start_datetime__lt=dropoff_dt,
+        intervals = [
+            (start, end, 1)
+            for _, start, end in AvailabilityRepository._holding_booking_intervals(
+                [listing_id], start_datetime, end_datetime
             )
-            .filter(Q(end_datetime__isnull=True) | Q(end_datetime__gt=pickup_dt))
-            .values("listing_id")
-            .annotate(total=Sum("count"))
+        ]
+        return AvailabilityRepository._peak_units(
+            intervals, start_datetime, end_datetime
         )
-        return {row["listing_id"]: row["total"] for row in rows}
 
     @staticmethod
     def get_fully_committed_listing_ids(
@@ -387,24 +432,14 @@ class AvailabilityRepository:
     ) -> set[int]:
         """
         Returns listing IDs where every unit in the fleet is already
-        committed for this date range — either booked by a customer or
-        taken out of service by a vendor block — leaving zero free.
-        Used by search's bulk filter.
+        committed for this date range — booked by a customer or taken out
+        of service by a vendor block — leaving zero free.
         """
-        booked_counts = AvailabilityRepository.get_booked_counts_for_listings(
+        committed = AvailabilityRepository.get_committed_units_for_listings(
             listing_ids, pickup_dt, dropoff_dt
         )
-        blocked_counts = AvailabilityRepository.get_blocked_counts_for_listings(
-            listing_ids, pickup_dt, dropoff_dt
-        )
-        if not booked_counts and not blocked_counts:
+        if not committed:
             return set()
-
-        committed: dict[int, int] = {}
-        for listing_id, n in booked_counts.items():
-            committed[listing_id] = committed.get(listing_id, 0) + n
-        for listing_id, n in blocked_counts.items():
-            committed[listing_id] = committed.get(listing_id, 0) + n
 
         fleet_sizes = dict(
             VehicleListing.objects.filter(id__in=committed.keys()).values_list(

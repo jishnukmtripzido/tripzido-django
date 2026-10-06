@@ -23,12 +23,65 @@ from apps.locations.services import PickupLocationService
 from django.utils import timezone
 from apps.vehicles.utils import format_duration
 from apps.vehicles.models import VehicleListing
+from apps.vendors.models import Vendor
 from apps.notifications.services import NotificationService
 from apps.notifications.models import Notification
 from apps.core.utils import parse_client_datetime
 
 
 class AvailabilityService:
+
+    # Same limits VehicleSearchQuerySerializer enforces on search.
+    MIN_DURATION_HOURS = 3
+    MAX_DURATION_HOURS = 8760
+
+    @staticmethod
+    def validate_trip_window(pickup_dt: datetime, dropoff_dt: datetime) -> str | None:
+        """
+        Returns an error message if the pickup/dropoff pair isn't a
+        bookable trip, else None. Search validates this in its query
+        serializer; checkout paths call this so a direct API call can't
+        book past dates, or a zero/negative duration — which the package
+        matcher would otherwise price at ₹0 or below, since 0 and -24
+        are both evenly divisible by every package length.
+        """
+        if pickup_dt < timezone.now():
+            return "Pickup time cannot be in the past."
+        if dropoff_dt <= pickup_dt:
+            return "Dropoff must be after pickup."
+        duration_hours = (dropoff_dt - pickup_dt).total_seconds() / 3600
+        if duration_hours < AvailabilityService.MIN_DURATION_HOURS:
+            return (
+                f"Minimum booking duration is {AvailabilityService.MIN_DURATION_HOURS} hours."
+            )
+        if duration_hours > AvailabilityService.MAX_DURATION_HOURS:
+            return "Booking duration cannot exceed 1 year."
+        return None
+
+    LISTING_UNAVAILABLE_MESSAGE = "This vehicle is currently unavailable"
+
+    @staticmethod
+    def get_listing_unavailable_reason(listing) -> str | None:
+        """
+        Search only lists a listing when its vendor is APPROVED and its
+        vehicle type is published (VehicleSearchRepository). Detail and
+        checkout load a listing straight by ID — from a shared link,
+        browsing history, or a hand-typed URL — so they apply the same
+        rule here; otherwise a suspended/banned vendor's listing, or one
+        whose model the admin unpublished, stays bookable by ID even
+        though search hides it.
+
+        Suspending a vendor only changes Vendor.status — their listings
+        stay APPROVED — so this can't rely on listing.status alone.
+
+        One generic message for both cases, so customers aren't told a
+        vendor was suspended.
+        """
+        if listing.vendor.status != Vendor.Status.APPROVED:
+            return AvailabilityService.LISTING_UNAVAILABLE_MESSAGE
+        if not listing.vehicle_type.is_published:
+            return AvailabilityService.LISTING_UNAVAILABLE_MESSAGE
+        return None
 
     @staticmethod
     def is_available(
@@ -163,18 +216,15 @@ class AvailabilityService:
         dropoff_dt: datetime,
     ) -> int:
         """
-        Total fleet size minus units already committed for this date
-        range — combining active customer bookings AND vendor-created
-        blocked periods (e.g. a scooter sent for maintenance), each
-        counted by however many units they actually occupy.
+        Total fleet size minus the peak number of units committed at the
+        same moment in this date range — active customer bookings AND
+        vendor-created blocked periods (e.g. a scooter sent for
+        maintenance) on one timeline. See
+        AvailabilityRepository.get_committed_units_for_listings.
         """
-        booked_counts = AvailabilityRepository.get_booked_counts_for_listings(
+        committed = AvailabilityRepository.get_committed_units_for_listings(
             [listing_id], pickup_dt, dropoff_dt
-        )
-        blocked_counts = AvailabilityRepository.get_blocked_counts_for_listings(
-            [listing_id], pickup_dt, dropoff_dt
-        )
-        committed = booked_counts.get(listing_id, 0) + blocked_counts.get(listing_id, 0)
+        ).get(listing_id, 0)
         return max(0, listing_available_count - committed)
 
     @staticmethod
@@ -446,10 +496,7 @@ class VehicleSearchService:
 
         # ── 5. Capacity decoration (DB – 2 queries) ──────────────────
         listings_by_id = {l.id: l for vt in vehicle_types for l in vt.city_listings}
-        booked_counts = AvailabilityRepository.get_booked_counts_for_listings(
-            list(listings_by_id.keys()), pickup_datetime, dropoff_datetime
-        )
-        blocked_counts = AvailabilityRepository.get_blocked_counts_for_listings(
+        committed_counts = AvailabilityRepository.get_committed_units_for_listings(
             list(listings_by_id.keys()), pickup_datetime, dropoff_datetime
         )
         for listing_id, listing in listings_by_id.items():
@@ -457,9 +504,7 @@ class VehicleSearchService:
             listing.matched_package = pkg
             pkg.matched_multiplier = multiplier
             pkg.searched_duration_hours = duration_hours
-            committed = booked_counts.get(listing_id, 0) + blocked_counts.get(
-                listing_id, 0
-            )
+            committed = committed_counts.get(listing_id, 0)
             listing.available_count = max(0, listing.available_count - committed)
 
         # ── 6. Split by vendor ────────────────────────────────────────
@@ -714,7 +759,14 @@ class VehicleDetailService:
         availability_checked = False
         displayed_available_count = listing.available_count
 
-        if listing.available_count <= 0:
+        # Page still loads (shared links shouldn't 404), but booking is
+        # disabled — the date-based checks below are skipped once
+        # is_available is False.
+        unavailable_reason = AvailabilityService.get_listing_unavailable_reason(listing)
+        if unavailable_reason:
+            is_available = False
+            availability_message = unavailable_reason
+        elif listing.available_count <= 0:
             is_available = False
             availability_message = "This vehicle is sold out at this location"
 
@@ -850,9 +902,17 @@ class VehicleDetailService:
         with quantity at all — it's a per-vehicle allowance already baked
         into total_km_limit.
         """
+        window_error = AvailabilityService.validate_trip_window(pickup_dt, dropoff_dt)
+        if window_error:
+            return None, window_error
+
         listing = VehicleDetailRepository.get_listing_by_id(listing_id)
         if listing is None:
             return None, "Vehicle listing not found"
+
+        unavailable_reason = AvailabilityService.get_listing_unavailable_reason(listing)
+        if unavailable_reason:
+            return None, unavailable_reason
 
         if listing.available_count <= 0:
             return None, "This vehicle is sold out at this location"

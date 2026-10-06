@@ -3,6 +3,7 @@ import uuid
 import secrets
 from decimal import Decimal
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 from datetime import timedelta
 from apps.bookings.models import Booking, BookingCancellation
@@ -156,9 +157,22 @@ class BookingCheckoutService:
         can't both pass the capacity check for the same dates and create
         overlapping bookings that exceed the fleet size.
         """
+        # Checked before taking the listing lock — nothing here needs it.
+        window_error = AvailabilityService.validate_trip_window(pickup_dt, dropoff_dt)
+        if window_error:
+            return None, window_error
+
         listing = VehicleDetailRepository.get_listing_for_checkout(listing_id)
         if listing is None:
             return None, "Vehicle listing not found"
+
+        # listing.vehicle_type is loaded lazily on purpose: adding it to
+        # get_listing_for_checkout's select_related would make
+        # select_for_update lock the shared VehicleType row too, queueing
+        # checkouts for that model across every vendor.
+        unavailable_reason = AvailabilityService.get_listing_unavailable_reason(listing)
+        if unavailable_reason:
+            return None, unavailable_reason
 
         if listing.available_count <= 0:
             return None, "This vehicle is sold out at this location"
@@ -378,10 +392,22 @@ class BookingCheckoutService:
         # the held unit(s) may have already been released and resold.
         # Flag for manual reconciliation (payment captured, but booking no
         # longer valid) instead of pretending everything's fine.
-        non_reconfirmable = group_bookings.exclude(
-            status=Booking.Status.PENDING_PAYMENT
+        #
+        # A PENDING_PAYMENT booking past its expires_at counts as expired
+        # too, even if expire_stale_pending_bookings hasn't flipped it yet:
+        # availability already stops holding its unit at expires_at, so
+        # confirming it here could double-book that unit.
+        non_reconfirmable = group_bookings.filter(
+            ~Q(status=Booking.Status.PENDING_PAYMENT)
+            | Q(expires_at__lt=timezone.now())
         )
         if non_reconfirmable.exists():
+            late_booking = non_reconfirmable.first()
+            left_state = (
+                "expired"
+                if late_booking.status == Booking.Status.PENDING_PAYMENT
+                else late_booking.status
+            )
             payment.status = Payment.Status.SUCCESS
             payment.completed_at = timezone.now()
             payment.gateway_response = gateway_payload
@@ -389,7 +415,7 @@ class BookingCheckoutService:
             payment.is_reconciled = False  # ← explicitly flag for ops review
             payment.failure_reason = (
                 "Payment succeeded after booking group left PENDING_PAYMENT "
-                f"(status: {non_reconfirmable.first().status}) — needs manual refund/resolution."
+                f"(status: {left_state}) — needs manual refund/resolution."
             )
             payment.save()
             return True
