@@ -48,11 +48,14 @@ def send_otp_sms(self, phone_number, otp):
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=5)
 def send_otp_email(self, email, otp):
+    from .services import OTPService
+
+    expiry_minutes = OTPService.OTP_TTL // 60
     try:
         send_mail(
             subject="Your Tripzido password reset code",
             message=(
-                f"Your one-time code is {otp}. It expires in 10 minutes. "
+                f"Your one-time code is {otp}. It expires in {expiry_minutes} minutes. "
                 "If you didn't request this, you can safely ignore this email."
             ),
             from_email=settings.DEFAULT_FROM_EMAIL,

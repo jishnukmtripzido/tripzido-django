@@ -265,6 +265,7 @@ class AvailabilityRepository:
                     Booking.Status.CANCELLED,
                     Booking.Status.PAYMENT_FAILED,
                     Booking.Status.EXPIRED,
+                    Booking.Status.COMPLETED,
                 ]
             )
             .values_list(
@@ -327,6 +328,7 @@ class AvailabilityRepository:
                     Booking.Status.CANCELLED,
                     Booking.Status.PAYMENT_FAILED,
                     Booking.Status.EXPIRED,
+                    Booking.Status.COMPLETED,
                 ]
             )
             .filter(dropoff_date__gte=start_datetime.date())
