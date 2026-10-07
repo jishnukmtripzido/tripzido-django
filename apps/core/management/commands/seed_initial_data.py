@@ -10,7 +10,7 @@ class Command(BaseCommand):
     them together for a one-shot fresh environment setup.
     """
 
-    help = "Runs all app-level seed commands in dependency order. Idempotent — safe to re-run."
+    help = "Runs all app-level seed commands in dependency order. Idempotent - safe to re-run."
 
     # Order matters if a later seed depends on an earlier one existing
     # (e.g. a CancellationPolicy seed might reference a default admin
@@ -18,19 +18,24 @@ class Command(BaseCommand):
     SEED_COMMANDS = [
         "seed_platform_config",
         "seed_cancellation_policy",  # add as you build more seeders
-        # "seed_default_subscription_plan",
-        # "seed_legal_documents",
+        "seed_package_types",
+        "seed_default_subscription_plan",
+        # Placeholders unless run directly with --tc-file / --privacy-file.
+        "seed_legal_documents",
+        # seed_tax_rates is deliberately not here: rates are a legal
+        # decision and must be passed explicitly — run it on its own.
     ]
 
     def handle(self, *args, **options):
         self.stdout.write(self.style.MIGRATE_HEADING("Seeding initial data...\n"))
 
         for command_name in self.SEED_COMMANDS:
-            self.stdout.write(self.style.MIGRATE_LABEL(f"→ {command_name}"))
+            # ASCII only — Windows consoles (cp1252) can't encode "→".
+            self.stdout.write(self.style.MIGRATE_LABEL(f"-> {command_name}"))
             try:
                 call_command(command_name)
             except Exception as e:
-                self.stdout.write(self.style.ERROR(f"  Failed: {command_name} — {e}"))
+                self.stdout.write(self.style.ERROR(f"  Failed: {command_name} - {e}"))
                 raise
             self.stdout.write("")
 
