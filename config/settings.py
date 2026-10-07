@@ -209,6 +209,7 @@ REST_FRAMEWORK = {
         "rest_framework.filters.SearchFilter",  # searching
         "rest_framework.filters.OrderingFilter",  # ordering
     ],
+    "EXCEPTION_HANDLER": "apps.core.exceptions.api_exception_handler",
     "DEFAULT_PAGINATION_CLASS": "apps.core.pagination.CustomPagination",
     "PAGE_SIZE": 10,
 }

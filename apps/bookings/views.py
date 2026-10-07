@@ -517,6 +517,8 @@ class VendorBookingDetailView(GenericAPIView):
 class VendorBookingStatusUpdateView(GenericAPIView):
     """PATCH /api/bookings/vendor/<int:booking_id>/status/  Body: {"status": "ONGOING"}"""
 
+    # Suspended vendors still serve existing bookings (handover/return).
+    allowed_for_suspended_vendor = True
     permission_classes = [IsAuthenticated]
     serializer_class = VendorBookingStatusUpdateSerializer
 
@@ -557,6 +559,8 @@ class VendorBookingStatusUpdateView(GenericAPIView):
 
 
 class VendorCancelBookingView(GenericAPIView):
+    # Suspended vendors can still cancel an existing booking they can't serve.
+    allowed_for_suspended_vendor = True
     permission_classes = [IsAuthenticated]
     serializer_class = VendorCancelBookingRequestSerializer
 

@@ -60,6 +60,7 @@ class NotificationUnreadCountView(APIView):
 class NotificationMarkReadView(APIView):
     """PATCH /api/notifications/<int:notification_id>/read/"""
 
+    allowed_for_suspended_vendor = True  # harmless; see AuditJWTAuthentication
     permission_classes = [IsAuthenticated]
 
     def patch(self, request, notification_id: int):
@@ -84,6 +85,7 @@ class NotificationMarkReadView(APIView):
 class NotificationMarkAllReadView(APIView):
     """POST /api/notifications/mark-all-read/"""
 
+    allowed_for_suspended_vendor = True  # harmless; see AuditJWTAuthentication
     permission_classes = [IsAuthenticated]
 
     def post(self, request):

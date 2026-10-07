@@ -1,3 +1,4 @@
+import logging
 import random
 import uuid
 import secrets
@@ -229,6 +230,20 @@ class BookingCheckoutService:
             ).quantize(Decimal("0.01"))
         else:
             unit_advance = unit_rent_amount
+
+        # Cashfree rejects orders below ₹1 (it surfaced only as a generic
+        # "Unable to initiate payment"). If the partial advance would fall
+        # under that, collect the full rent instead — the frontend applies
+        # the same rule so the customer sees this amount before paying.
+        min_online_amount = Decimal("1.00")
+        if effective_mode == "PARTIAL" and unit_advance * quantity < min_online_amount:
+            effective_mode = "FULL"
+            unit_advance = unit_rent_amount
+        if unit_advance * quantity < min_online_amount:
+            return None, (
+                "The amount due is below ₹1, which can't be paid online. "
+                "Please contact support."
+            )
         unit_remaining = unit_rent_amount - unit_advance
         unit_commission = (
             unit_rent_amount * commission_percentage / Decimal("100")
@@ -348,6 +363,9 @@ class BookingCheckoutService:
                 return_url=return_url,
             )
         except Exception as exc:
+            logging.getLogger(__name__).exception(
+                "Cashfree create_order failed for %s", order_id
+            )
             payment.status = Payment.Status.FAILED
             payment.failure_reason = str(exc)
             payment.failed_at = timezone.now()

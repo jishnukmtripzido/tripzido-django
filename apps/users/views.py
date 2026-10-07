@@ -245,6 +245,9 @@ class VendorVerifyOTPView(OTPVerifyAndTokenView):
 
 
 class LogoutView(APIView):
+    # Still authenticates when a Bearer header is sent, so a suspended
+    # vendor's logout would otherwise hit the read-only block.
+    allowed_for_suspended_vendor = True
     permission_classes = [AllowAny]
 
     def post(self, request):
@@ -785,8 +788,13 @@ class VendorPasswordLoginView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
+        # SUSPENDED vendors may still log in to serve existing bookings —
+        # AuditJWTAuthentication keeps them read-only otherwise.
         vendor = user.get_vendor_profile()
-        if vendor is None or vendor.status != vendor.Status.APPROVED:
+        if vendor is None or vendor.status not in (
+            vendor.Status.APPROVED,
+            vendor.Status.SUSPENDED,
+        ):
             return error_response(
                 message="This vendor account is not currently active. Contact support for details.",
                 status=status.HTTP_403_FORBIDDEN,
