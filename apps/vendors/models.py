@@ -1,6 +1,17 @@
+import os
+import uuid
+
 from django.db import models
 from apps.core.models import BaseModel
+from apps.core.storage import private_storage
 from apps.users.models import User
+
+
+def vendor_document_upload_to(instance, filename):
+    # Random name so document paths can't be guessed; the vendor's
+    # original filename is kept in VendorDocument.original_filename.
+    ext = os.path.splitext(filename)[1].lower()
+    return f"vendor/documents/{uuid.uuid4().hex}{ext}"
 
 # Create your models here.
 
@@ -195,7 +206,9 @@ class VendorDocument(BaseModel):
         Vendor, on_delete=models.CASCADE, related_name="documents"
     )
     doc_type = models.CharField(max_length=30, choices=DocType.choices)
-    file = models.FileField(upload_to="vendor/documents/")
+    file = models.FileField(
+        upload_to=vendor_document_upload_to, storage=private_storage
+    )
     original_filename = models.CharField(max_length=255)
     status = models.CharField(
         max_length=20, choices=Status.choices, default=Status.PENDING

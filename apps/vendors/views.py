@@ -1,9 +1,15 @@
 # apps/vendors/views.py
+import os
+
+from django.http import FileResponse
+from rest_framework.views import APIView
 from rest_framework.generics import GenericAPIView
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from drf_spectacular.utils import extend_schema
 from rest_framework.parsers import MultiPartParser, FormParser
+from apps.core.throttling import UPLOAD_THROTTLE_CLASSES
+from apps.vendors.document_links import check_document_token
 from apps.vendors.serializers import (
     AdminBankAccountCreateSerializer,
     AdminBankAccountReviewSerializer,
@@ -184,6 +190,7 @@ class VendorDocumentsSelfView(GenericAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = VendorDocumentSerializer
     parser_classes = [MultiPartParser, FormParser]
+    throttle_classes = UPLOAD_THROTTLE_CLASSES
 
     def get(self, request):
         vendor = request.user.get_vendor_profile()
@@ -219,7 +226,7 @@ class VendorDocumentsSelfView(GenericAPIView):
             input_serializer.validated_data["doc_type"],
             input_serializer.validated_data["file"],
         )
-        output_serializer = VendorDocumentSerializer(doc)
+        output_serializer = VendorDocumentSerializer(doc, context={"request": request})
         return success_response(
             data=output_serializer.data,
             message="Document submitted for review",
@@ -436,7 +443,7 @@ class AdminVendorDocumentsView(GenericAPIView):
         )
         if doc is None:
             return error_response(message=error, status=status.HTTP_400_BAD_REQUEST)
-        output = AdminVendorDocumentSerializer(doc)
+        output = AdminVendorDocumentSerializer(doc, context={"request": request})
         return success_response(
             data=output.data,
             message="Document uploaded successfully",
@@ -466,7 +473,7 @@ class AdminDocumentReviewView(GenericAPIView):
         )
         if doc is None:
             return error_response(message=error, status=status.HTTP_400_BAD_REQUEST)
-        output = AdminVendorDocumentSerializer(doc)
+        output = AdminVendorDocumentSerializer(doc, context={"request": request})
         return success_response(
             data=output.data,
             message="Document reviewed successfully",
@@ -1034,7 +1041,7 @@ class AdminDocumentDetailView(GenericAPIView):
         )
         if doc is None:
             return error_response(message=error, status=status.HTTP_404_NOT_FOUND)
-        output = AdminVendorDocumentSerializer(doc)
+        output = AdminVendorDocumentSerializer(doc, context={"request": request})
         return success_response(
             data=output.data,
             message="Document updated successfully",
@@ -1170,3 +1177,58 @@ class AdminBankAccountRestoreView(GenericAPIView):
         return success_response(
             data=None, message="Bank account reactivated", status=status.HTTP_200_OK
         )
+
+
+class VendorDocumentFileView(APIView):
+    """
+    GET /api/vendors/documents/<int:doc_id>/file/?token=...
+
+    Streams a vendor KYC document from private storage. There's no
+    login check here on purpose: the signed token in the URL *is* the
+    permission — it's only ever handed out by the document list/detail
+    endpoints, which already require the owning vendor or staff, and it
+    expires after document_links.LINK_MAX_AGE. That keeps plain links
+    (<a href>, window.open) working in the frontends.
+    """
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    # Shown in the browser; anything else (e.g. legacy .txt uploads)
+    # is forced to download so it can never render as a page.
+    INLINE_CONTENT_TYPES = {
+        ".pdf": "application/pdf",
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+    }
+
+    def get(self, request, doc_id: int):
+        error = check_document_token(doc_id, request.query_params.get("token", ""))
+        if error:
+            return error_response(message=error, status=status.HTTP_403_FORBIDDEN)
+
+        doc = AdminVendorDocumentService.get_by_id(doc_id)
+        if doc is None or not doc.file:
+            return error_response(
+                message="Document not found", status=status.HTTP_404_NOT_FOUND
+            )
+        try:
+            handle = doc.file.open("rb")
+        except OSError:
+            return error_response(
+                message="Document file is missing. Please re-upload it.",
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        ext = os.path.splitext(doc.file.name)[1].lower()
+        content_type = self.INLINE_CONTENT_TYPES.get(ext)
+        response = FileResponse(
+            handle,
+            as_attachment=content_type is None,
+            filename=doc.original_filename or os.path.basename(doc.file.name),
+            content_type=content_type or "application/octet-stream",
+        )
+        response["X-Content-Type-Options"] = "nosniff"
+        response["Cache-Control"] = "private, no-store"
+        return response

@@ -26,6 +26,12 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from django.conf.urls.static import static
 from django.conf import settings
 
+
+class ThrottledTokenObtainPairView(TokenObtainPairView):
+    # Password login like the staff/vendor ones — same "login" rate.
+    throttle_scope = "login"
+
+
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("api-auth/", include("rest_framework.urls")),
@@ -38,7 +44,11 @@ urlpatterns = [
     ),
     # Redoc (alternative UI)
     path("api/redoc/", SpectacularRedocView.as_view(url_name="schema"), name="redoc"),
-    path("api/token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
+    path(
+        "api/token/",
+        ThrottledTokenObtainPairView.as_view(),
+        name="token_obtain_pair",
+    ),
     path("api/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
     path("api/locations/", include("apps.locations.urls")),
     path("api/vendors/", include("apps.vendors.urls")),

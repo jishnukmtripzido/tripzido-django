@@ -16,7 +16,12 @@ from apps.vehicles.models import (
     Brand,
     ReviewRating,
 )
-from apps.vendors.models import Vendor, VendorTerms, VendorSubscription
+from apps.vendors.models import (
+    Vendor,
+    VendorTerms,
+    VendorSubscription,
+    SubscriptionPlan,
+)
 from django.utils import timezone
 from datetime import datetime, time
 from collections import Counter
@@ -844,9 +849,33 @@ class VendorFleetRepository:
         return listing
 
     @staticmethod
+    def get_max_images_per_listing(vendor_id: int) -> int:
+        """
+        The image cap from the vendor's current ACTIVE subscription plan.
+        Falls back to the default plan, then to the model field's default,
+        so a vendor without a live subscription still gets a sane limit
+        rather than an unlimited one.
+        """
+        subscription = (
+            VendorSubscription.objects.filter(
+                vendor_id=vendor_id,
+                is_current=True,
+                status=VendorSubscription.Status.ACTIVE,
+            )
+            .select_related("plan")
+            .first()
+        )
+        if subscription is not None:
+            return subscription.plan.max_images_per_listing
+        default_plan = SubscriptionPlan.objects.filter(is_default=True).first()
+        if default_plan is not None:
+            return default_plan.max_images_per_listing
+        return SubscriptionPlan._meta.get_field("max_images_per_listing").default
+
+    @staticmethod
     def add_images(
-        listing: VehicleListing, files: list, uploaded_by
-    ) -> list[VehicleImage]:
+        listing: VehicleListing, files: list, uploaded_by, max_images: int
+    ) -> list[VehicleImage] | None:
         """
         Appends new images after whatever's already attached — sort_order
         continues from the current max rather than restarting at 0, so
@@ -857,23 +886,33 @@ class VendorFleetRepository:
         VendorFleetListingSerializer.get_primary_image already falls
         back to the first image by sort_order, so nothing breaks, it
         just picks a new de facto primary silently.
-        """
-        existing_count = listing.images.count()
-        max_sort_order = listing.images.aggregate(Max("sort_order"))["sort_order__max"]
-        next_sort_order = (max_sort_order + 1) if max_sort_order is not None else 0
 
-        rows = [
-            VehicleImage(
-                listing=listing,
-                image=f,
-                source=VehicleImage.ImageSource.VENDOR,
-                sort_order=next_sort_order + i,
-                is_primary=(existing_count == 0 and i == 0),
-                uploaded_by=uploaded_by,
-            )
-            for i, f in enumerate(files)
-        ]
-        return VehicleImage.objects.bulk_create(rows)
+        The listing row is locked while counting so two concurrent
+        uploads can't both pass the max_images check. Returns None
+        (nothing inserted) if the limit would be exceeded.
+        """
+        with transaction.atomic():
+            VehicleListing.objects.select_for_update().filter(pk=listing.pk).first()
+            existing_count = listing.images.count()
+            if existing_count + len(files) > max_images:
+                return None
+            max_sort_order = listing.images.aggregate(Max("sort_order"))[
+                "sort_order__max"
+            ]
+            next_sort_order = (max_sort_order + 1) if max_sort_order is not None else 0
+
+            rows = [
+                VehicleImage(
+                    listing=listing,
+                    image=f,
+                    source=VehicleImage.ImageSource.VENDOR,
+                    sort_order=next_sort_order + i,
+                    is_primary=(existing_count == 0 and i == 0),
+                    uploaded_by=uploaded_by,
+                )
+                for i, f in enumerate(files)
+            ]
+            return VehicleImage.objects.bulk_create(rows)
 
     @staticmethod
     def delete_image(listing_id: int, vendor_id: int, image_id: int) -> bool:

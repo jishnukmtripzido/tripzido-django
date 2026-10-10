@@ -1,5 +1,7 @@
 # apps/vehicles/views.py
 
+import logging
+
 from django.db.models import ProtectedError
 from rest_framework.generics import GenericAPIView
 from rest_framework import status
@@ -64,6 +66,7 @@ from apps.vehicles.services import (
     VendorBlockedPeriodService,
     VendorPickupPointService,
     AdminListingService,
+    ImageUploadError,
 )
 from apps.vehicles.repositories import AdminReviewRepository
 from apps.core.responses import success_response, error_response
@@ -72,9 +75,12 @@ from drf_spectacular.types import OpenApiTypes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from apps.users.permissions import IsStaffRole
 from apps.core.pagination import CustomPagination
+from apps.core.throttling import UPLOAD_THROTTLE_CLASSES
 from django.db import IntegrityError
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.views import APIView
+
+logger = logging.getLogger(__name__)
 
 # class VehicleSearchView(GenericAPIView):
 #     serializer_class = VehicleSearchResultSerializer
@@ -844,6 +850,7 @@ class VendorListingImagesView(GenericAPIView):
 
     permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser]
+    throttle_classes = UPLOAD_THROTTLE_CLASSES
     serializer_class = VendorListingImageDetailSerializer
 
     def post(self, request, listing_id: int):
@@ -860,14 +867,22 @@ class VendorListingImagesView(GenericAPIView):
                 message="No images provided. Attach one or more files under the 'images' field.",
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        # NOTE: SubscriptionPlan.max_images_per_listing exists on the
-        # model but isn't enforced here yet — would need an extra
-        # query to the vendor's current subscription plan. Flagging
-        # as a known gap rather than silently skipping it.
-
-        created = VendorListingImageService.add_images(
-            listing_id, vendor.id, files, request.user
-        )
+        try:
+            created = VendorListingImageService.add_images(
+                listing_id, vendor.id, files, request.user
+            )
+        except ImageUploadError as exc:
+            return error_response(
+                message=exc.message,
+                errors=exc.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception:
+            logger.exception("Vehicle image upload failed for listing %s", listing_id)
+            return error_response(
+                message="Something went wrong while uploading images. Please try again.",
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
         if created is None:
             return error_response(
                 message="Listing not found",

@@ -1,6 +1,8 @@
 from django.contrib import admin
+from django.utils.html import format_html
 
 from apps.core.admin import SoftDeleteAdmin
+from apps.vendors.document_links import build_document_url
 from apps.vendors.models import (
     BankAccount,
     SubscriptionPlan,
@@ -60,7 +62,22 @@ class VendorDocumentAdmin(SoftDeleteAdmin):
     list_display = ("vendor", "doc_type", "status", "is_deleted_display")
     list_filter = ("doc_type", "status")
     search_fields = ("vendor__business_name",)
-    readonly_fields = ("is_deleted_display", "reviewed_at")
+    # The file lives in private storage, so the default file widget's
+    # "Currently: <link>" would point at a dead /media/ URL. Uploads go
+    # through the API; admin shows a signed link instead.
+    exclude = ("file",)
+    readonly_fields = ("is_deleted_display", "reviewed_at", "document_link")
+
+    @admin.display(description="Document")
+    def document_link(self, obj):
+        url = build_document_url(obj)
+        if not url:
+            return "-"
+        return format_html(
+            '<a href="{}" target="_blank" rel="noopener">Open document</a> '
+            "(link valid for 1 hour)",
+            url,
+        )
 
 
 @admin.register(BankAccount)

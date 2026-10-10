@@ -123,8 +123,58 @@ from .models import User
 import hashlib
 import hmac
 import secrets
+import time
 
 from django.core.cache import cache
+
+
+class LoginLockoutService:
+    """
+    Per-account lockout for password logins (staff email / vendor
+    phone). Counted per account rather than per IP so rotating IPs
+    doesn't help a password-guesser. A password reset clears it, which
+    is the way back in for a real user someone locked out on purpose.
+    """
+
+    MAX_FAILURES = 5
+    LOCKOUT_TTL = 900
+
+    @classmethod
+    def _key(cls, kind: str, scope: str, identity: str) -> str:
+        digest = hashlib.sha256(identity.strip().lower().encode("utf-8")).hexdigest()
+        return f"login:{kind}:{scope}:{digest}"
+
+    @classmethod
+    def locked_for(cls, scope: str, identity: str) -> int:
+        """Seconds until the lock lifts; 0 if not locked."""
+        locked_until = cache.get(cls._key("lock", scope, identity))
+        if not locked_until:
+            return 0
+        return max(int(locked_until - time.time()), 0)
+
+    @classmethod
+    def record_failure(cls, scope: str, identity: str) -> bool:
+        """Counts a failed attempt; returns True if this one triggered the lock."""
+        fail_key = cls._key("fail", scope, identity)
+        if cache.add(fail_key, 1, timeout=cls.LOCKOUT_TTL):
+            failures = 1
+        else:
+            failures = cache.incr(fail_key)
+        if failures < cls.MAX_FAILURES:
+            return False
+        cache.delete(fail_key)
+        cache.set(
+            cls._key("lock", scope, identity),
+            time.time() + cls.LOCKOUT_TTL,
+            timeout=cls.LOCKOUT_TTL,
+        )
+        return True
+
+    @classmethod
+    def reset(cls, scope: str, identity: str) -> None:
+        cache.delete_many(
+            [cls._key("fail", scope, identity), cls._key("lock", scope, identity)]
+        )
 
 
 class OTPService:

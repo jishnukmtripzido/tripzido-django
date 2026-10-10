@@ -15,7 +15,8 @@ from apps.users.models import User
 from apps.core.responses import success_response, error_response
 from apps.core.permissions import IsStaffRole
 from apps.core.pagination import CustomPagination
-from .services import OTPService, UserService, AdminUserService
+from apps.core.network import get_client_ip
+from .services import OTPService, UserService, AdminUserService, LoginLockoutService
 from .serializers import (
     AdminStaffPasswordResetSerializer,
     SendOTPSerializer,
@@ -40,8 +41,16 @@ from .tasks import send_otp_email, send_otp_sms
 from .repositories import normalize_phone
 
 
-def _client_ip(request):
-    return request.META.get("REMOTE_ADDR") or "unknown"
+def _login_locked_error(seconds: int):
+    minutes = max(1, -(-seconds // 60))
+    return error_response(
+        message=(
+            f"Too many failed login attempts. Please try again in {minutes} "
+            "minute(s), or use 'Forgot password' to reset your password."
+        ),
+        errors={},
+        status=status.HTTP_429_TOO_MANY_REQUESTS,
+    )
 
 
 def _otp_error(reason):
@@ -60,6 +69,7 @@ def _otp_error(reason):
 
 class SendOTPView(APIView):
     permission_classes = [AllowAny]
+    throttle_scope = "otp"
     otp_scope = "login"
 
     # Set on a subclass to restrict this endpoint to accounts holding a
@@ -139,7 +149,7 @@ class SendOTPView(APIView):
             )
 
         otp, otp_error = OTPService.issue(
-            self.otp_scope, local_number, _client_ip(request)
+            self.otp_scope, local_number, get_client_ip(request)
         )
         if otp is None:
             return _otp_error(otp_error)
@@ -156,6 +166,7 @@ class OTPVerifyAndTokenView(APIView):
     """
 
     permission_classes = [AllowAny]
+    throttle_scope = "otp"
     required_role: str | None = None
     otp_scope = "login"
 
@@ -177,7 +188,7 @@ class OTPVerifyAndTokenView(APIView):
         local_number, _ = normalize_phone(phone_number)
 
         verified, verify_error = OTPService.verify(
-            self.otp_scope, local_number, otp, _client_ip(request)
+            self.otp_scope, local_number, otp, get_client_ip(request)
         )
         if verify_error == "missing":
             return error_response(
@@ -315,6 +326,7 @@ class RegisterSendOTPView(APIView):
     """
 
     permission_classes = [AllowAny]
+    throttle_scope = "otp"
 
     @extend_schema(
         request=RegisterSendOTPSerializer,
@@ -373,7 +385,7 @@ class RegisterSendOTPView(APIView):
 
         # ── 3. Generate OTP ───────────────────────────────────────────────
         otp, otp_error = OTPService.issue(
-            "registration", local_number, _client_ip(request)
+            "registration", local_number, get_client_ip(request)
         )
         if otp is None:
             return _otp_error(otp_error)
@@ -416,6 +428,7 @@ class RegisterVerifyOTPView(APIView):
     """
 
     permission_classes = [AllowAny]
+    throttle_scope = "otp"
 
     @extend_schema(
         request=RegisterVerifyOTPSerializer,
@@ -438,7 +451,7 @@ class RegisterVerifyOTPView(APIView):
 
         # ── 1. OTP verification ───────────────────────────────────────────
         verified, verify_error = OTPService.verify(
-            "registration", local_number, otp, _client_ip(request)
+            "registration", local_number, otp, get_client_ip(request)
         )
         if verify_error == "missing":
             return error_response(
@@ -511,6 +524,7 @@ class StaffLoginView(APIView):
     """
 
     permission_classes = [AllowAny]
+    throttle_scope = "login"
 
     def post(self, request):
         serializer = StaffLoginSerializer(data=request.data)
@@ -523,6 +537,15 @@ class StaffLoginView(APIView):
 
         email = serializer.validated_data["email"]
         password = serializer.validated_data["password"]
+
+        # Checked before the password so a locked account can't be
+        # probed, even with the right password.
+        locked_for = LoginLockoutService.locked_for("staff", email)
+        if locked_for:
+            LoginLogService.record(
+                "ADMIN", email, False, failure_reason="locked", request=request
+            )
+            return _login_locked_error(locked_for)
 
         user = User.objects.filter(email__iexact=email).first()
         if (
@@ -538,10 +561,14 @@ class StaffLoginView(APIView):
                 failure_reason="invalid_credentials",
                 request=request,
             )
+            if LoginLockoutService.record_failure("staff", email):
+                return _login_locked_error(LoginLockoutService.LOCKOUT_TTL)
             return error_response(
                 message="Invalid email or password.",
                 status=status.HTTP_401_UNAUTHORIZED,
             )
+
+        LoginLockoutService.reset("staff", email)
 
         if not (user.has_role("SUPER_ADMIN") or user.has_role("SUPPORT")):
             LoginLogService.record(
@@ -746,6 +773,7 @@ class VendorPasswordLoginView(APIView):
     """
 
     permission_classes = [AllowAny]
+    throttle_scope = "login"
 
     def post(self, request):
         serializer = VendorPasswordLoginSerializer(data=request.data)
@@ -760,6 +788,15 @@ class VendorPasswordLoginView(APIView):
         password = serializer.validated_data["password"]
         local_number, _ = normalize_phone(phone_number)
 
+        # Checked before the password so a locked account can't be
+        # probed, even with the right password.
+        locked_for = LoginLockoutService.locked_for("vendor", local_number)
+        if locked_for:
+            LoginLogService.record(
+                "VENDOR", phone_number, False, failure_reason="locked", request=request
+            )
+            return _login_locked_error(locked_for)
+
         user = UserService.get_user_by_phone(local_number)
         if user is None:
             LoginLogService.record(
@@ -769,6 +806,10 @@ class VendorPasswordLoginView(APIView):
                 failure_reason="not_found",
                 request=request,
             )
+            # Counted like a wrong password so the response pattern
+            # doesn't reveal which phone numbers have accounts.
+            if LoginLockoutService.record_failure("vendor", local_number):
+                return _login_locked_error(LoginLockoutService.LOCKOUT_TTL)
             return error_response(
                 message="Invalid phone number or password.",
                 status=status.HTTP_401_UNAUTHORIZED,
@@ -823,11 +864,14 @@ class VendorPasswordLoginView(APIView):
                 failure_reason="wrong_password",
                 request=request,
             )
+            if LoginLockoutService.record_failure("vendor", local_number):
+                return _login_locked_error(LoginLockoutService.LOCKOUT_TTL)
             return error_response(
                 message="Invalid phone number or password.",
                 status=status.HTTP_401_UNAUTHORIZED,
             )
 
+        LoginLockoutService.reset("vendor", local_number)
         LoginLogService.record("VENDOR", phone_number, True, user=user, request=request)
         refresh = RefreshToken.for_user(user)
         return success_response(
@@ -851,6 +895,7 @@ class VendorForgotPasswordSendOTPView(APIView):
     """
 
     permission_classes = [AllowAny]
+    throttle_scope = "otp"
 
     def post(self, request):
         serializer = VendorForgotPasswordSendOTPSerializer(data=request.data)
@@ -881,7 +926,7 @@ class VendorForgotPasswordSendOTPView(APIView):
             return generic_response
 
         otp, _ = OTPService.issue(
-            "vendor_password_reset", local_number, _client_ip(request)
+            "vendor_password_reset", local_number, get_client_ip(request)
         )
         if otp is None:
             return generic_response
@@ -894,6 +939,7 @@ class VendorForgotPasswordResetView(APIView):
     """POST /api/users/vendor/forgot-password/reset/"""
 
     permission_classes = [AllowAny]
+    throttle_scope = "otp"
 
     def post(self, request):
         serializer = VendorForgotPasswordResetSerializer(data=request.data)
@@ -908,7 +954,7 @@ class VendorForgotPasswordResetView(APIView):
         local_number, _ = normalize_phone(data["phone_number"])
 
         verified, verify_error = OTPService.verify(
-            "vendor_password_reset", local_number, data["otp"], _client_ip(request)
+            "vendor_password_reset", local_number, data["otp"], get_client_ip(request)
         )
         if verify_error == "missing":
             return error_response(
@@ -932,6 +978,7 @@ class VendorForgotPasswordResetView(APIView):
 
         user.set_password(data["new_password"])
         user.save()
+        LoginLockoutService.reset("vendor", local_number)
         # Signs them straight in after reset — no separate re-login
         # step needed. Say so if you'd rather redirect to /login
         # instead and make them sign in fresh with the new password.
@@ -980,6 +1027,8 @@ class AdminStaffPasswordResetView(GenericAPIView):
 
         user.set_password(serializer.validated_data["new_password"])
         user.save()
+        if user.email:
+            LoginLockoutService.reset("staff", user.email)
         return success_response(
             data=None,
             message="Password updated successfully",
@@ -999,6 +1048,7 @@ class StaffForgotPasswordSendOTPView(APIView):
     """
 
     permission_classes = [AllowAny]
+    throttle_scope = "otp"
 
     def post(self, request):
         serializer = StaffForgotPasswordSendOTPSerializer(data=request.data)
@@ -1027,7 +1077,7 @@ class StaffForgotPasswordSendOTPView(APIView):
             return generic_response
 
         otp, _ = OTPService.issue(
-            "staff_password_reset", email.lower(), _client_ip(request)
+            "staff_password_reset", email.lower(), get_client_ip(request)
         )
         if otp is None:
             return generic_response
@@ -1040,6 +1090,7 @@ class StaffForgotPasswordResetView(APIView):
     """POST /api/users/staff/forgot-password/reset/"""
 
     permission_classes = [AllowAny]
+    throttle_scope = "otp"
 
     def post(self, request):
         serializer = StaffForgotPasswordResetSerializer(data=request.data)
@@ -1053,7 +1104,7 @@ class StaffForgotPasswordResetView(APIView):
         data = serializer.validated_data
         email = data["email"]
         verified, verify_error = OTPService.verify(
-            "staff_password_reset", email.lower(), data["otp"], _client_ip(request)
+            "staff_password_reset", email.lower(), data["otp"], get_client_ip(request)
         )
         if verify_error == "missing":
             return error_response(
@@ -1079,6 +1130,7 @@ class StaffForgotPasswordResetView(APIView):
 
         user.set_password(data["new_password"])
         user.save()
+        LoginLockoutService.reset("staff", email)
         role = "SUPER_ADMIN" if user.has_role("SUPER_ADMIN") else "SUPPORT"
 
         refresh = RefreshToken.for_user(user)

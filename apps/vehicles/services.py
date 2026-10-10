@@ -27,6 +27,7 @@ from apps.vendors.models import Vendor
 from apps.notifications.services import NotificationService
 from apps.notifications.models import Notification
 from apps.core.utils import parse_client_datetime
+from apps.core.images import process_image, ImageValidationError
 
 
 class AvailabilityService:
@@ -1470,14 +1471,70 @@ class VendorListingCreateService:
         return listing
 
 
+class ImageUploadError(Exception):
+    """User-facing upload failure; `errors` holds per-file details."""
+
+    def __init__(self, message: str, errors: list | None = None):
+        super().__init__(message)
+        self.message = message
+        self.errors = errors or []
+
+
 class VendorListingImageService:
 
     @staticmethod
+    def _limit_error(existing: int, uploading: int, max_images: int):
+        remaining = max(max_images - existing, 0)
+        return ImageUploadError(
+            f"Your plan allows up to {max_images} images per listing. "
+            f"This listing has {existing}, so you can add {remaining} more "
+            f"(you tried to upload {uploading})."
+        )
+
+    @staticmethod
     def add_images(listing_id: int, vendor_id: int, files: list, uploaded_by):
+        """
+        All-or-nothing: every file is validated and compressed (see
+        core.images.process_image) before anything is saved, so one bad
+        file in a batch never leaves a half-uploaded gallery. Returns
+        None if the listing doesn't exist / isn't this vendor's; raises
+        ImageUploadError for anything the client should fix.
+        """
         listing = VendorFleetRepository.get_listing_for_vendor(listing_id, vendor_id)
         if listing is None:
             return None
-        return VendorFleetRepository.add_images(listing, files, uploaded_by)
+
+        # Cheap pre-check so a vendor at their limit isn't made to wait
+        # for compression first; the authoritative check is repeated
+        # under a row lock in the repository.
+        max_images = VendorFleetRepository.get_max_images_per_listing(vendor_id)
+        existing = listing.images.count()
+        if existing + len(files) > max_images:
+            raise VendorListingImageService._limit_error(
+                existing, len(files), max_images
+            )
+
+        processed, errors = [], []
+        for f in files:
+            try:
+                processed.append(process_image(f))
+            except ImageValidationError as exc:
+                errors.append({"file": f.name, "error": str(exc)})
+        if errors:
+            raise ImageUploadError(
+                f"{len(errors)} of {len(files)} image(s) could not be uploaded. "
+                "No images were saved.",
+                errors,
+            )
+
+        created = VendorFleetRepository.add_images(
+            listing, processed, uploaded_by, max_images
+        )
+        if created is None:
+            raise VendorListingImageService._limit_error(
+                listing.images.count(), len(files), max_images
+            )
+        return created
 
     @staticmethod
     def delete_image(listing_id: int, vendor_id: int, image_id: int) -> bool:

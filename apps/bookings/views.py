@@ -53,6 +53,7 @@ from apps.payments.models import Payment
 from apps.bookings.models import Booking, BookingCancellation
 
 # Local Apps - Core
+from apps.core.network import get_client_ip
 from apps.core.pagination import CustomPagination
 from apps.core.permissions import IsStaffRole
 from apps.core.responses import error_response, success_response
@@ -114,7 +115,7 @@ class CreateBookingOrderView(GenericAPIView):
             quantity=quantity,
             payment_mode=data.get("payment_mode", "FULL"),
             return_url=return_url,
-            ip_address=request.META.get("REMOTE_ADDR"),
+            ip_address=get_client_ip(request),
         )
 
         if result is None:

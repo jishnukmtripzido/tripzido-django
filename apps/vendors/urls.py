@@ -31,6 +31,7 @@ from apps.vendors.views import (
     VendorDashboardStatsView,
     VendorDashboardStatusView,
     VendorDashboardView,
+    VendorDocumentFileView,
     VendorDocumentsSelfView,
     VendorProfileView,
     VendorTermsView,
@@ -46,6 +47,13 @@ urlpatterns = [
         "me/documents/",
         VendorDocumentsSelfView.as_view(),
         name="vendor-documents-self",
+    ),
+    # Signed, expiring download link for a KYC document (vendor or
+    # staff) — the token in the query string is the access check.
+    path(
+        "documents/<int:doc_id>/file/",
+        VendorDocumentFileView.as_view(),
+        name="vendor-document-file",
     ),
     # Vendor's own bank accounts — view + submit only, no edit/delete.
     # Vendor-submitted accounts always land PENDING for admin review;

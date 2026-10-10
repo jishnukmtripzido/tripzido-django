@@ -518,6 +518,7 @@
 
 # apps/vendors/serializers.py
 from rest_framework import serializers
+from apps.vendors.document_links import build_document_url
 from django.core.validators import FileExtensionValidator
 from apps.bookings.serializers import VendorBookingListSerializer
 from apps.vendors.models import (
@@ -537,12 +538,12 @@ from apps.vendors.models import (
 DOCUMENT_FILE_EXTENSION_VALIDATOR = FileExtensionValidator(
     allowed_extensions=["pdf", "png", "jpg", "jpeg"]
 )
-DOCUMENT_FILE_MAX_BYTES = 50 * 1024 * 1024  # 50MB
+DOCUMENT_FILE_MAX_BYTES = 20 * 1024 * 1024  # 20MB — matches nginx client_max_body_size
 
 
 def validate_document_file_size(file):
     if file.size > DOCUMENT_FILE_MAX_BYTES:
-        raise serializers.ValidationError("File must be 50MB or smaller.")
+        raise serializers.ValidationError("File must be 20MB or smaller.")
 
 
 class VendorTermsSerializer(serializers.Serializer):
@@ -736,6 +737,7 @@ class VendorDocumentSerializer(serializers.ModelSerializer):
 
     status_label = serializers.CharField(source="get_status_display")
     doc_type_label = serializers.CharField(source="get_doc_type_display")
+    file = serializers.SerializerMethodField()
 
     class Meta:
         model = VendorDocument
@@ -751,6 +753,10 @@ class VendorDocumentSerializer(serializers.ModelSerializer):
             "reviewed_at",
             "created_at",
         ]
+
+    def get_file(self, obj):
+        # Signed, expiring link — the file itself is in private storage.
+        return build_document_url(obj, self.context.get("request"))
 
 
 class VendorBankAccountSerializer(serializers.ModelSerializer):
@@ -793,6 +799,7 @@ class AdminVendorDocumentSerializer(serializers.ModelSerializer):
     status_label = serializers.CharField(source="get_status_display")
     doc_type_label = serializers.CharField(source="get_doc_type_display")
     reviewed_by_name = serializers.SerializerMethodField()
+    file = serializers.SerializerMethodField()
 
     class Meta:
         model = VendorDocument
@@ -810,6 +817,10 @@ class AdminVendorDocumentSerializer(serializers.ModelSerializer):
             "is_active",
             "created_at",
         ]
+
+    def get_file(self, obj):
+        # Signed, expiring link — the file itself is in private storage.
+        return build_document_url(obj, self.context.get("request"))
 
     def get_reviewed_by_name(self, obj):
         return obj.reviewed_by.get_full_name() if obj.reviewed_by else None

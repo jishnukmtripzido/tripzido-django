@@ -1,4 +1,5 @@
 import logging
+from apps.core.network import get_client_ip
 from apps.logs.models import LoginLog, ActivityLog
 
 logger = logging.getLogger(__name__)
@@ -14,7 +15,7 @@ class LoginLogService:
                 identifier_attempted=identifier,
                 success=success,
                 failure_reason=failure_reason,
-                ip_address=request.META.get("REMOTE_ADDR") if request else None,
+                ip_address=get_client_ip(request) if request else None,
                 user_agent=(
                     request.META.get("HTTP_USER_AGENT", "")[:255] if request else ""
                 ),
@@ -46,7 +47,7 @@ class ActivityLogService:
                 target_label=target_label,
                 description=description,
                 metadata=metadata or {},
-                ip_address=request.META.get("REMOTE_ADDR") if request else None,
+                ip_address=get_client_ip(request) if request else None,
             )
         except Exception:
             logger.exception("Failed to record activity log")

@@ -436,11 +436,19 @@ class AdminVendorDocumentService:
         return True
 
     @staticmethod
+    def get_by_id(doc_id: int):
+        return AdminVendorDocumentRepository.get_by_id(doc_id)
+
+    @staticmethod
     def hard_delete(doc_id: int):
         doc = AdminVendorDocumentRepository.get_by_id(doc_id)
         if doc is None:
             return False
+        file = doc.file
         doc.hard_delete()
+        # KYC files shouldn't outlive their record on disk.
+        if file:
+            file.delete(save=False)
         return True
 
 

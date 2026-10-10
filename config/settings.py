@@ -212,6 +212,24 @@ REST_FRAMEWORK = {
     "EXCEPTION_HANDLER": "apps.core.exceptions.api_exception_handler",
     "DEFAULT_PAGINATION_CLASS": "apps.core.pagination.CustomPagination",
     "PAGE_SIZE": 10,
+    # Rate limiting — counters live in the default (Redis) cache, so
+    # they're shared across gunicorn workers. ScopedRateThrottle only
+    # applies to views that set throttle_scope ("login", "otp").
+    "DEFAULT_THROTTLE_CLASSES": [
+        "rest_framework.throttling.AnonRateThrottle",
+        "rest_framework.throttling.UserRateThrottle",
+        "rest_framework.throttling.ScopedRateThrottle",
+    ],
+    "DEFAULT_THROTTLE_RATES": {
+        "anon": "60/min",
+        "user": "300/min",
+        "login": "10/min",
+        "otp": "10/min",
+        "upload": "30/hour",
+    },
+    # Proxies in front of gunicorn (nginx = 1). Used to read the real
+    # client IP from X-Forwarded-For; see apps.core.network.get_client_ip.
+    "NUM_PROXIES": env.int("NUM_PROXIES", default=1),
 }
 
 from datetime import timedelta
@@ -268,6 +286,12 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
+
+# Files that must never be publicly reachable (vendor KYC documents).
+# Deliberately outside MEDIA_ROOT so nginx's /media/ alias can't serve
+# them — they're only downloadable through a signed link from
+# apps.vendors.views.VendorDocumentFileView.
+PRIVATE_MEDIA_ROOT = env("PRIVATE_MEDIA_ROOT", default=str(BASE_DIR / "private_media"))
 
 
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
